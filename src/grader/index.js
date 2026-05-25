@@ -1,0 +1,107 @@
+import { runHeuristics, normalizeTaskType } from "./heuristics/index.js";
+import { llmGrade } from "./llm.js";
+import { config } from "../config.js";
+
+export async function grade({ task_type, tier, requirements, submission }) {
+  const category = normalizeTaskType(task_type);
+  const heuristics = runHeuristics({ task_type: category, submission, requirements });
+
+  if (tier === "fast" || !config.groq.enabled) {
+    return {
+      task_type: category,
+      tier,
+      verdict: heuristicVerdict(heuristics),
+      reasoning: heuristicReason(heuristics),
+      evidence: heuristics,
+      llm: null,
+      fallback: !config.groq.enabled && tier !== "fast",
+    };
+  }
+
+  try {
+    const llm = await llmGrade({ task_type: category, requirements, submission, heuristics });
+    return {
+      task_type: category,
+      tier: "full",
+      verdict: llm.verdict,
+      reasoning: llm.reasoning,
+      confidence: llm.confidence,
+      strengths: llm.strengths,
+      concerns: llm.concerns,
+      evidence: heuristics,
+      llm: { model: llm.model },
+      fallback: false,
+    };
+  } catch (err) {
+    console.warn("[grader] LLM failed, falling back to heuristics:", err.message);
+    return {
+      task_type: category,
+      tier: "full",
+      verdict: heuristicVerdict(heuristics),
+      reasoning: `LLM unavailable, heuristics only: ${heuristicReason(heuristics)}`,
+      evidence: heuristics,
+      llm: null,
+      fallback: true,
+      llm_error: err.message,
+    };
+  }
+}
+
+function heuristicVerdict(h) {
+  // Category-agnostic base rules, then category-specific signals.
+  if (h.word_count?.required != null && !h.word_count.pass) return "reject";
+  if (h.topic_coverage?.score != null && h.topic_coverage.score < 0.5) return "reject";
+
+  if (h.category === "code") {
+    const issues = h.structure?.issues ?? [];
+    if (issues.some((i) => i.startsWith("unbalanced_") || i === "very_few_code_lines"))
+      return "reject";
+    if (issues.length) return "review";
+  }
+  if (h.category === "social") {
+    if (h.character_count && !h.character_count.pass) return "reject";
+    if ((h.issues ?? []).length) return "review";
+  }
+  if (h.category === "research") {
+    if ((h.research_issues ?? []).includes("no_citations")) return "reject";
+    if ((h.research_issues ?? []).length) return "review";
+  }
+  if (h.structure?.issues?.includes("uniform_sentence_length")) return "review";
+  if (h.topic_coverage?.score != null && h.topic_coverage.score < 0.8) return "review";
+  return "approve";
+}
+
+function heuristicReason(h) {
+  const bits = [];
+  if (h.word_count?.required != null) {
+    bits.push(
+      `word count ${h.word_count.submitted}/${h.word_count.required} (${h.word_count.pass ? "ok" : "fail"})`,
+    );
+  } else if (h.word_count) {
+    bits.push(`${h.word_count.submitted} words`);
+  }
+  if (h.category === "code") {
+    if (h.language) bits.push(`language: ${h.language}`);
+    if (h.line_count) bits.push(`${h.line_count.code} code / ${h.line_count.comments} comment lines`);
+    if (h.structure?.issues?.length) bits.push(`code: ${h.structure.issues.join(", ")}`);
+  } else if (h.category === "social") {
+    if (h.character_count) bits.push(`${h.character_count.submitted}/${h.character_count.limit} chars`);
+    if (h.hashtags) bits.push(`${h.hashtags.count} hashtags`);
+  } else if (h.category === "research") {
+    if (h.citations) bits.push(`${h.citations.url_count} citations, ${h.citations.unique_domains} domains`);
+    if (h.research_issues?.length) bits.push(h.research_issues.join(", "));
+  } else if (h.category === "data") {
+    if (h.format) bits.push(`format: ${h.format}`);
+    if (h.csv_shape) bits.push(`${h.csv_shape.row_count} rows × ${h.csv_shape.column_count} cols`);
+    if (h.json_shape) bits.push(`json: ${h.json_shape.top_type}`);
+  } else {
+    if (h.readability?.band && h.readability.band !== "unknown") {
+      bits.push(`readability ${h.readability.band}`);
+    }
+    if (h.structure?.issues?.length) bits.push(`structure: ${h.structure.issues.join(", ")}`);
+  }
+  if (h.topic_coverage?.score != null) {
+    bits.push(`topic coverage ${Math.round(h.topic_coverage.score * 100)}%`);
+  }
+  return bits.join("; ");
+}

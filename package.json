@@ -1,0 +1,28 @@
+{
+  "name": "0xwork-quality-api",
+  "version": "0.1.0",
+  "description": "x402-gated quality-check API for 0xWork submissions, with a Telegram bot front-end",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "bot": "node bot/index.js",
+    "dev:bot": "node --watch bot/index.js",
+    "migrate": "node scripts/migrate.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "grammy": "^1.30.0",
+    "groq-sdk": "^0.9.1",
+    "html-to-text": "^10.0.0",
+    "pdf-parse": "^2.4.5",
+    "pg": "^8.21.0",
+    "text-readability": "^1.1.0",
+    "zod": "^3.23.8"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

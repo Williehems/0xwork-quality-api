@@ -1,0 +1,56 @@
+services:
+  - type: web
+    name: 0xwork-quality-api
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
+      - key: X402_PAY_TO
+        sync: false
+      - key: X402_NETWORK
+        value: base
+      - key: X402_FACILITATOR_URL
+        value: https://x402.org/facilitator
+      - key: X402_BYPASS
+        value: "true"
+      - key: PRICE_FAST_USDC
+        value: "0.05"
+      - key: PRICE_FULL_USDC
+        value: "0.50"
+
+  - type: web
+    name: 0xwork-quality-bot
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm run bot
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
+      - key: DATABASE_URL
+        sync: false
+      - key: ZEROXWORK_API_URL
+        value: https://api.0xwork.org
+      - key: IPFS_GATEWAY
+        value: https://ipfs.io/ipfs/
+      - key: MINIAPP_URL
+        sync: false
+      - key: API_BASE_URL
+        sync: false
+      - key: BOT_PUBLIC_URL
+        sync: false
