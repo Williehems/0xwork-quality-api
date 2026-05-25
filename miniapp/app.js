@@ -1,13 +1,17 @@
 // Telegram Mini App for 0xWork quality check.
 //
 // Flow:
-//   1. Read ?session=<id>&wcProjectId=<id> from the URL. apiBase/botBase
-//      default to location.origin (combined server hosts both).
+//   1. Read ?session=<id>&wcProjectId=<id> from the URL.
 //   2. GET /session/<id> to load the grading payload.
-//   3. On tap: lazy-import WalletConnect + viem + x402-fetch, pair the
-//      wallet, sign the EIP-3009 USDC TransferWithAuthorization, retry
-//      /check with X-PAYMENT header.
+//   3. On tap: lazy-import WalletConnect, pair the wallet, then drive the
+//      x402 dance via the inline client in ./x402-client.js
+//        a. POST /check — expect 402 with payment requirements.
+//        b. Sign EIP-3009 TransferWithAuthorization via the provider's
+//           native eth_signTypedData_v4.
+//        c. Retry /check with the base64-JSON X-PAYMENT header.
 //   4. Return verdict to the bot via WebApp.sendData().
+
+import { signX402Authorization } from "./x402-client.js";
 
 const tg = window.Telegram?.WebApp;
 tg?.ready();
@@ -15,11 +19,7 @@ tg?.expand();
 
 const params = new URLSearchParams(location.search);
 const sessionId = params.get("session");
-// The Mini App is always served from the same origin as the bot/API
-// combined server. We intentionally do NOT honor ?api= / ?bot= URL params —
-// older bot builds stamped them with http://localhost:3001 (when
-// BOT_PUBLIC_URL env wasn't set), which is unreachable from the user's
-// phone and blocked as mixed-content from an HTTPS page.
+// Same-origin combined server hosts both the Mini App and bot/API.
 const apiBase = location.origin;
 const botBase = location.origin;
 const wcProjectId = params.get("wcProjectId") ?? "";
@@ -33,8 +33,6 @@ const $status = document.getElementById("status");
 let payload = null;
 let wcProvider = null;
 
-// Surface ANY unhandled error to the user so we don't end up with a silent
-// dead page when something at module init or in an event handler throws.
 window.addEventListener("error", (e) => {
   setStatus("Script error: " + (e.message || String(e.error || "unknown")), "err");
 });
@@ -72,29 +70,15 @@ async function loadSession() {
   }
 }
 
-// Heavy wallet libs are imported lazily on first tap. This keeps the page
-// usable (and the error visible) even if a CDN dep is slow or fails.
-let walletLibs = null;
-async function importWalletLibs() {
-  if (walletLibs) return walletLibs;
-  setStatus("Loading wallet libraries…");
-  const [{ EthereumProvider }, viem, chains, { wrapFetchWithPayment }] = await Promise.all([
-    import("https://esm.sh/@walletconnect/ethereum-provider@2.17.0"),
-    import("https://esm.sh/viem@2.21.0"),
-    import("https://esm.sh/viem@2.21.0/chains"),
-    import("https://esm.sh/x402-fetch@1.2.0"),
-  ]);
-  walletLibs = {
-    EthereumProvider,
-    createWalletClient: viem.createWalletClient,
-    custom: viem.custom,
-    baseSepolia: chains.baseSepolia,
-    wrapFetchWithPayment,
-  };
-  return walletLibs;
+let walletConnectMod = null;
+async function importWalletConnect() {
+  if (walletConnectMod) return walletConnectMod;
+  setStatus("Loading wallet library…");
+  walletConnectMod = await import("https://esm.sh/@walletconnect/ethereum-provider@2.17.0");
+  return walletConnectMod;
 }
 
-async function ensureWalletConnected(libs) {
+async function ensureWalletConnected(EthereumProvider) {
   if (wcProvider?.accounts?.length) return wcProvider;
 
   if (!wcProjectId) {
@@ -103,9 +87,9 @@ async function ensureWalletConnected(libs) {
     );
   }
 
-  wcProvider = await libs.EthereumProvider.init({
+  wcProvider = await EthereumProvider.init({
     projectId: wcProjectId,
-    chains: [libs.baseSepolia.id],
+    chains: [84532], // Base Sepolia
     showQrModal: true,
     metadata: {
       name: "0xWork Quality Check",
@@ -126,34 +110,44 @@ async function payAndGrade() {
   $pay.disabled = true;
   setBtnBusy(true);
   try {
-    setStatus("Loading wallet libraries…");
-    const libs = await importWalletLibs();
+    const { EthereumProvider } = await importWalletConnect();
 
     setStatus("Opening wallet…");
-    const provider = await ensureWalletConnected(libs);
+    const provider = await ensureWalletConnected(EthereumProvider);
     const [address] = provider.accounts;
     if (!address) throw new Error("Wallet did not return an account.");
 
-    setStatus(`Wallet paired (${short(address)}). Preparing payment…`);
-    const walletClient = libs.createWalletClient({
-      account: address,
-      chain: libs.baseSepolia,
-      transport: libs.custom(provider),
+    setStatus(`Wallet paired (${short(address)}). Requesting payment terms…`);
+    const body = JSON.stringify({
+      task_type: payload.task_type,
+      tier: payload.tier,
+      requirements: payload.requirements,
+      submission: payload.submission,
     });
+    const headers = { "content-type": "application/json" };
 
-    const fetchWithPayment = libs.wrapFetchWithPayment(fetch, walletClient);
+    let res = await fetch(`${apiBase}/check`, { method: "POST", headers, body });
 
-    setStatus("Sign the payment in your wallet…");
-    const res = await fetchWithPayment(`${apiBase}/check`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        task_type: payload.task_type,
-        tier: payload.tier,
-        requirements: payload.requirements,
-        submission: payload.submission,
-      }),
-    });
+    if (res.status === 402) {
+      const offer = await res.json();
+      const accepts = offer?.accepts;
+      if (!Array.isArray(accepts) || accepts.length === 0) {
+        throw new Error("API offered no payment options.");
+      }
+      const reqSpec = accepts.find((a) => a.scheme === "exact") ?? accepts[0];
+
+      setStatus("Sign the payment in your wallet…");
+      const xPayment = await signX402Authorization(
+        provider, address, offer.x402Version ?? 1, reqSpec,
+      );
+
+      setStatus("Submitting payment…");
+      res = await fetch(`${apiBase}/check`, {
+        method: "POST",
+        headers: { ...headers, "X-PAYMENT": xPayment },
+        body,
+      });
+    }
 
     if (!res.ok) {
       const text = await res.text().catch(() => "");
