@@ -95,7 +95,7 @@ async function ensureWalletConnected(EthereumProvider) {
 
   setStatus(`Connecting to relay (projectId ${maskId(wcProjectId)})…`);
   try {
-    wcProvider = await EthereumProvider.init({
+    const initPromise = EthereumProvider.init({
       projectId: wcProjectId,
       chains: [84532], // Base Sepolia
       showQrModal: true,
@@ -106,10 +106,24 @@ async function ensureWalletConnected(EthereumProvider) {
         icons: [],
       },
     });
+    const timeout = new Promise((_, rej) =>
+      setTimeout(() => rej(new Error(
+        "relay never responded after 20s — projectId likely not allowed for this origin (" +
+        location.origin + "). Re-check the Reown allowed-origins list."
+      )), 20000),
+    );
+    wcProvider = await Promise.race([initPromise, timeout]);
   } catch (e) {
     const m = e?.message || String(e);
     throw new Error(`Relay handshake failed (projectId ${maskId(wcProjectId)}): ${m}`);
   }
+
+  wcProvider.on?.("display_uri", (uri) => {
+    console.log("[wc] display_uri", uri?.slice(0, 40) + "…");
+    setStatus("Scan QR with your wallet (or open WC link)…");
+  });
+  wcProvider.on?.("connect", () => console.log("[wc] connect"));
+  wcProvider.on?.("disconnect", (e) => console.log("[wc] disconnect", e));
 
   if (!wcProvider.session) {
     await wcProvider.connect();
