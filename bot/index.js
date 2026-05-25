@@ -1,4 +1,6 @@
 import "dotenv/config";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import express from "express";
 import { Bot, InlineKeyboard } from "grammy";
 
@@ -6,6 +8,8 @@ import { setWallet, getWallet } from "../db/index.js";
 import { listInReviewByPoster, getTaskById, getSubmission } from "../src/zerox/client.js";
 import { inferRubric } from "../src/rubric/index.js";
 import { createApiApp, logApiStartupNotes } from "../src/app.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const MINIAPP_URL = process.env.MINIAPP_URL ?? "";
@@ -442,7 +446,7 @@ bot.callbackQuery(/^confirm:(.+)$/, async (ctx) => {
   if (MINIAPP_READY) {
     const url =
       `${MINIAPP_URL}?session=${encodeURIComponent(sessionId)}` +
-      `&api=${encodeURIComponent(API_BASE_URL)}` +
+      `&api=${encodeURIComponent(BOT_PUBLIC_URL)}` +
       `&bot=${encodeURIComponent(BOT_PUBLIC_URL)}`;
     const kb = new InlineKeyboard().webApp("🎯 Pay & Grade", url);
     await ctx.editMessageReplyMarkup({ reply_markup: kb }).catch(() => {});
@@ -648,6 +652,10 @@ http.use((req, res, next) => {
   next();
 });
 http.get("/", (_req, res) => res.json({ ok: true, service: "bot+api" }));
+
+// Serve the Telegram Mini App at /app (e.g. /app/index.html, /app/app.js)
+http.use("/app", express.static(path.join(__dirname, "../miniapp")));
+
 http.get("/session/:id", (req, res) => {
   const payload = getSession(req.params.id);
   if (!payload) return res.status(404).json({ error: "session_not_found" });
@@ -669,7 +677,10 @@ http.listen(BOT_PORT, () => {
 });
 
 await registerCommands().catch((e) => console.warn("[bot] setMyCommands failed:", e.message));
-bot.start({ onStart: (me) => console.log(`[bot] started as @${me.username}`) });
+bot.start({
+  drop_pending_updates: true,
+  onStart: (me) => console.log(`[bot] started as @${me.username}`),
+});
 
 // ── Renderers ───────────────────────────────────────────────────────────
 
