@@ -28,12 +28,10 @@ services:
       - key: X402_PAY_TO
         sync: false
       - key: X402_NETWORK
-        value: base
+        value: base-sepolia
       - key: X402_FACILITATOR_URL
         value: https://x402.org/facilitator
       - key: X402_BYPASS
         value: "true"
-      - key: PRICE_FAST_USDC
-        value: "0.05"
       - key: PRICE_FULL_USDC
-        value: "0.50"
+        value: "0.10"

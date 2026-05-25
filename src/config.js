@@ -34,13 +34,12 @@ export const config = {
 
   x402: {
     payTo: optional("X402_PAY_TO", "0x0000000000000000000000000000000000000000"),
-    network: optional("X402_NETWORK", "base"),
+    network: optional("X402_NETWORK", "base-sepolia"),
     facilitatorUrl: optional("X402_FACILITATOR_URL", "https://x402.org/facilitator"),
     bypass: bool("X402_BYPASS", false),
   },
 
   pricing: {
-    fast: optional("PRICE_FAST_USDC", "0.05"),
-    full: optional("PRICE_FULL_USDC", "0.50"),
+    full: optional("PRICE_FULL_USDC", "0.10"),
   },
 };

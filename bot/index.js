@@ -711,7 +711,7 @@ function composeSummaryGradeText(meta) {
 }
 
 function rubricKeyboard(sessionId) {
-  const gradeLabel = MINIAPP_READY ? "🎯 Grade (0.50 USDC)" : "🎯 Grade";
+  const gradeLabel = MINIAPP_READY ? "🎯 Grade (0.10 USDC)" : "🎯 Grade";
   return new InlineKeyboard()
     .text(gradeLabel, `confirm:${sessionId}`)
     .row()
