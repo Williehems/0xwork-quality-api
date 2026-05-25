@@ -1,18 +1,13 @@
-// Telegram Mini App — real WalletConnect v2 pairing + x402 USDC payment.
+// Telegram Mini App for 0xWork quality check.
 //
 // Flow:
-//   1. Read ?session=<id>&api=<url>&bot=<url>&wcProjectId=<id> from the URL.
-//   2. GET ${bot}/session/${id} to load the grading payload.
-//   3. On user tap: init WalletConnect EthereumProvider, prompt wallet pair.
-//   4. Build a viem walletClient on top of the WC EIP-1193 provider.
-//   5. wrapFetchWithPayment intercepts the 402 from /check, signs the EIP-3009
-//      USDC TransferWithAuthorization, retries with X-PAYMENT header.
-//   6. Return the verdict to the bot via WebApp.sendData(); bot renders it.
-
-import { EthereumProvider } from "https://esm.sh/@walletconnect/ethereum-provider@2.17.0";
-import { createWalletClient, custom } from "https://esm.sh/viem@2.21.0";
-import { baseSepolia } from "https://esm.sh/viem@2.21.0/chains";
-import { wrapFetchWithPayment } from "https://esm.sh/x402-fetch@1.2.0";
+//   1. Read ?session=<id>&wcProjectId=<id> from the URL. apiBase/botBase
+//      default to location.origin (combined server hosts both).
+//   2. GET /session/<id> to load the grading payload.
+//   3. On tap: lazy-import WalletConnect + viem + x402-fetch, pair the
+//      wallet, sign the EIP-3009 USDC TransferWithAuthorization, retry
+//      /check with X-PAYMENT header.
+//   4. Return verdict to the bot via WebApp.sendData().
 
 const tg = window.Telegram?.WebApp;
 tg?.ready();
@@ -20,9 +15,6 @@ tg?.expand();
 
 const params = new URLSearchParams(location.search);
 const sessionId = params.get("session");
-// Mini App is served from the same origin as the bot/API combined server,
-// so default to location.origin instead of trusting URL params (which the bot
-// can't fill in if BOT_PUBLIC_URL env isn't set).
 const apiBase = params.get("api") || location.origin;
 const botBase = params.get("bot") || location.origin;
 const wcProjectId = params.get("wcProjectId") ?? "";
@@ -36,40 +28,80 @@ const $status = document.getElementById("status");
 let payload = null;
 let wcProvider = null;
 
+// Surface ANY unhandled error to the user so we don't end up with a silent
+// dead page when something at module init or in an event handler throws.
+window.addEventListener("error", (e) => {
+  setStatus("Script error: " + (e.message || String(e.error || "unknown")), "err");
+});
+window.addEventListener("unhandledrejection", (e) => {
+  const msg = e.reason?.message || String(e.reason || "unknown");
+  setStatus("Promise error: " + msg, "err");
+});
+
 async function loadSession() {
   if (!sessionId) {
-    fail("Missing session — open this from the Telegram bot.");
+    fail("Missing session parameter. Open this from the Telegram bot.");
     return;
   }
+  setStatus("Loading submission…");
   try {
-    const res = await fetch(`${botBase}/session/${encodeURIComponent(sessionId)}`);
+    const res = await fetch(`${botBase}/session/${encodeURIComponent(sessionId)}`, {
+      cache: "no-store",
+    });
     if (res.status === 404) {
-      fail("Session expired or not found. Re-send the submission to the bot.");
+      fail("Session expired. Go back to chat, open /inbox and pick the task again.");
       return;
     }
-    if (!res.ok) throw new Error(`bot ${res.status}`);
+    if (!res.ok) {
+      fail(`Bot returned ${res.status}. Try again from the chat.`);
+      return;
+    }
     payload = await res.json();
     $task.textContent = payload.requirements?.title ?? "(untitled)";
     const words = String(payload.submission ?? "").split(/\s+/).filter(Boolean).length;
     const type = payload.task_type ? `${payload.task_type} · ` : "";
     $subMeta.textContent = `${type}${words.toLocaleString()} word${words === 1 ? "" : "s"}`;
+    $pay.disabled = false;
+    setStatus("");
   } catch (err) {
-    fail("Couldn't load submission: " + (err.message ?? String(err)));
+    fail("Couldn't load submission: " + (err?.message ?? String(err)));
   }
 }
 
-async function ensureWalletConnected() {
+// Heavy wallet libs are imported lazily on first tap. This keeps the page
+// usable (and the error visible) even if a CDN dep is slow or fails.
+let walletLibs = null;
+async function importWalletLibs() {
+  if (walletLibs) return walletLibs;
+  setStatus("Loading wallet libraries…");
+  const [{ EthereumProvider }, viem, chains, { wrapFetchWithPayment }] = await Promise.all([
+    import("https://esm.sh/@walletconnect/ethereum-provider@2.17.0"),
+    import("https://esm.sh/viem@2.21.0"),
+    import("https://esm.sh/viem@2.21.0/chains"),
+    import("https://esm.sh/x402-fetch@1.2.0"),
+  ]);
+  walletLibs = {
+    EthereumProvider,
+    createWalletClient: viem.createWalletClient,
+    custom: viem.custom,
+    baseSepolia: chains.baseSepolia,
+    wrapFetchWithPayment,
+  };
+  return walletLibs;
+}
+
+async function ensureWalletConnected(libs) {
   if (wcProvider?.accounts?.length) return wcProvider;
 
   if (!wcProjectId) {
     throw new Error(
-      "Wallet pairing isn't configured (missing Reown Project ID). The bot operator needs to set REOWN_PROJECT_ID.",
+      "Wallet pairing isn't configured (REOWN_PROJECT_ID missing). Ask the bot operator.",
     );
   }
 
-  wcProvider = await EthereumProvider.init({
+  wcProvider = await libs.EthereumProvider.init({
     projectId: wcProjectId,
-    chains: [baseSepolia.id],
+    chains: [libs.baseSepolia.id],
     showQrModal: true,
     metadata: {
       name: "0xWork Quality Check",
@@ -90,21 +122,24 @@ async function payAndGrade() {
   $pay.disabled = true;
   setBtnBusy(true);
   try {
-    setStatus("Opening wallet…", "info");
-    const provider = await ensureWalletConnected();
+    setStatus("Loading wallet libraries…");
+    const libs = await importWalletLibs();
+
+    setStatus("Opening wallet…");
+    const provider = await ensureWalletConnected(libs);
     const [address] = provider.accounts;
     if (!address) throw new Error("Wallet did not return an account.");
 
-    setStatus(`Wallet paired (${short(address)}). Preparing payment…`, "info");
-    const walletClient = createWalletClient({
+    setStatus(`Wallet paired (${short(address)}). Preparing payment…`);
+    const walletClient = libs.createWalletClient({
       account: address,
-      chain: baseSepolia,
-      transport: custom(provider),
+      chain: libs.baseSepolia,
+      transport: libs.custom(provider),
     });
 
-    const fetchWithPayment = wrapFetchWithPayment(fetch, walletClient);
+    const fetchWithPayment = libs.wrapFetchWithPayment(fetch, walletClient);
 
-    setStatus("Sign the payment in your wallet…", "info");
+    setStatus("Sign the payment in your wallet…");
     const res = await fetchWithPayment(`${apiBase}/check`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -143,23 +178,25 @@ function short(addr) {
 }
 
 function setStatus(msg, kind) {
-  $status.textContent = msg;
-  $status.className = "status" + (kind === "err" ? " err" : kind === "ok" ? " ok" : kind === "info" ? " info" : "");
+  $status.textContent = msg ?? "";
+  $status.className = "status" + (kind === "err" ? " err" : kind === "ok" ? " ok" : "");
 }
 
 function setBtnBusy(busy) {
   if (busy) {
     $pay.classList.add("busy");
-    if ($payLabel) $payLabel.textContent = "Working…";
+    $payLabel.textContent = "Working…";
   } else {
     $pay.classList.remove("busy");
-    if ($payLabel) $payLabel.textContent = "Pair wallet & pay";
+    $payLabel.textContent = "Pair wallet and pay";
   }
 }
 
 function fail(msg) {
   setStatus(msg, "err");
   $pay.disabled = true;
+  if ($task.textContent === "Loading…") $task.textContent = "—";
+  if ($subMeta.textContent === "Loading…") $subMeta.textContent = "—";
 }
 
 $pay.addEventListener("click", payAndGrade);
