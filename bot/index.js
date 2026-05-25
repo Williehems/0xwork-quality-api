@@ -16,6 +16,7 @@ const MINIAPP_URL = process.env.MINIAPP_URL ?? "";
 const BOT_PORT = Number(process.env.BOT_PORT ?? process.env.PORT ?? 3001);
 const API_BASE_URL = process.env.API_BASE_URL ?? `http://localhost:${BOT_PORT}`;
 const BOT_PUBLIC_URL = process.env.BOT_PUBLIC_URL ?? `http://localhost:${BOT_PORT}`;
+const REOWN_PROJECT_ID = process.env.REOWN_PROJECT_ID ?? "";
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const STATE_TTL_MS = 10 * 60 * 1000;
 
@@ -447,7 +448,8 @@ bot.callbackQuery(/^confirm:(.+)$/, async (ctx) => {
     const url =
       `${MINIAPP_URL}?session=${encodeURIComponent(sessionId)}` +
       `&api=${encodeURIComponent(BOT_PUBLIC_URL)}` +
-      `&bot=${encodeURIComponent(BOT_PUBLIC_URL)}`;
+      `&bot=${encodeURIComponent(BOT_PUBLIC_URL)}` +
+      (REOWN_PROJECT_ID ? `&wcProjectId=${encodeURIComponent(REOWN_PROJECT_ID)}` : "");
     const kb = new InlineKeyboard().webApp("🎯 Pay & Grade", url);
     await ctx.editMessageReplyMarkup({ reply_markup: kb }).catch(() => {});
     return;

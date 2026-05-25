@@ -35,3 +35,5 @@ services:
         value: "true"
       - key: PRICE_FULL_USDC
         value: "0.10"
+      - key: REOWN_PROJECT_ID
+        sync: false
