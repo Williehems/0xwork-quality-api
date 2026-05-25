@@ -19,6 +19,9 @@ const BOT_PUBLIC_URL = process.env.BOT_PUBLIC_URL ?? `http://localhost:${BOT_POR
 const REOWN_PROJECT_ID = process.env.REOWN_PROJECT_ID ?? "";
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const STATE_TTL_MS = 10 * 60 * 1000;
+// Random per-process token appended to Mini App URLs as &_v= to defeat
+// Telegram WebView's aggressive HTML caching across deploys.
+const BUILD_TOKEN = Date.now().toString(36);
 
 const MINIAPP_READY = Boolean(MINIAPP_URL) && !MINIAPP_URL.startsWith("https://your-");
 
@@ -447,9 +450,12 @@ bot.callbackQuery(/^confirm:(.+)$/, async (ctx) => {
   if (MINIAPP_READY) {
     // Mini App is same-origin with the bot/API combined server, so we don't
     // pass api/bot URLs as params — the app uses location.origin directly.
+    // Append a per-process token so Telegram's WebView treats every link as
+    // a fresh URL and won't serve cached HTML from an earlier deploy.
     const url =
       `${MINIAPP_URL}?session=${encodeURIComponent(sessionId)}` +
-      (REOWN_PROJECT_ID ? `&wcProjectId=${encodeURIComponent(REOWN_PROJECT_ID)}` : "");
+      (REOWN_PROJECT_ID ? `&wcProjectId=${encodeURIComponent(REOWN_PROJECT_ID)}` : "") +
+      `&_v=${encodeURIComponent(BUILD_TOKEN)}`;
     const kb = new InlineKeyboard().webApp("🎯 Pay & Grade", url);
     await ctx.editMessageReplyMarkup({ reply_markup: kb }).catch(() => {});
     return;
@@ -655,8 +661,16 @@ http.use((req, res, next) => {
 });
 http.get("/", (_req, res) => res.json({ ok: true, service: "bot+api" }));
 
-// Serve the Telegram Mini App at /app (e.g. /app/index.html, /app/app.js)
-http.use("/app", express.static(path.join(__dirname, "../miniapp")));
+// Serve the Telegram Mini App at /app (e.g. /app/index.html, /app/app.js).
+// Telegram's WebView caches HTML aggressively, so disable caching on all
+// mini app assets — the bundle is tiny enough that re-fetching is fine.
+http.use("/app", express.static(path.join(__dirname, "../miniapp"), {
+  setHeaders: (res) => {
+    res.setHeader("Cache-Control", "no-store, must-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+  },
+}));
 
 http.get("/session/:id", (req, res) => {
   const payload = getSession(req.params.id);
