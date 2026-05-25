@@ -5,11 +5,12 @@ import { Bot, InlineKeyboard } from "grammy";
 import { setWallet, getWallet } from "../db/index.js";
 import { listInReviewByPoster, getTaskById, getSubmission } from "../src/zerox/client.js";
 import { inferRubric } from "../src/rubric/index.js";
+import { createApiApp, logApiStartupNotes } from "../src/app.js";
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const MINIAPP_URL = process.env.MINIAPP_URL ?? "";
-const API_BASE_URL = process.env.API_BASE_URL ?? "http://localhost:3000";
 const BOT_PORT = Number(process.env.BOT_PORT ?? process.env.PORT ?? 3001);
+const API_BASE_URL = process.env.API_BASE_URL ?? `http://localhost:${BOT_PORT}`;
 const BOT_PUBLIC_URL = process.env.BOT_PUBLIC_URL ?? `http://localhost:${BOT_PORT}`;
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const STATE_TTL_MS = 10 * 60 * 1000;
@@ -646,7 +647,7 @@ http.use((req, res, next) => {
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
-http.get("/", (_req, res) => res.json({ ok: true, service: "bot" }));
+http.get("/", (_req, res) => res.json({ ok: true, service: "bot+api" }));
 http.get("/session/:id", (req, res) => {
   const payload = getSession(req.params.id);
   if (!payload) return res.status(404).json({ error: "session_not_found" });
@@ -658,7 +659,14 @@ http.get("/session/:id", (req, res) => {
     meta: payload.meta ?? null,
   });
 });
-http.listen(BOT_PORT, () => console.log(`[bot-http] listening on :${BOT_PORT}`));
+
+// Mount the API (/healthz, /check) on the same server.
+http.use(createApiApp());
+
+http.listen(BOT_PORT, () => {
+  console.log(`[server] listening on :${BOT_PORT} (bot + api)`);
+  logApiStartupNotes();
+});
 
 await registerCommands().catch((e) => console.warn("[bot] setMyCommands failed:", e.message));
 bot.start({ onStart: (me) => console.log(`[bot] started as @${me.username}`) });

@@ -5,8 +5,10 @@
   "type": "module",
   "main": "src/index.js",
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "node --watch src/index.js",
+    "start": "node bot/index.js",
+    "dev": "node --watch bot/index.js",
+    "api-only": "node src/index.js",
+    "dev:api-only": "node --watch src/index.js",
     "bot": "node bot/index.js",
     "dev:bot": "node --watch bot/index.js",
     "migrate": "node scripts/migrate.js"
