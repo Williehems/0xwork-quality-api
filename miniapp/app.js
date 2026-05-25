@@ -15,8 +15,13 @@ tg?.expand();
 
 const params = new URLSearchParams(location.search);
 const sessionId = params.get("session");
-const apiBase = params.get("api") || location.origin;
-const botBase = params.get("bot") || location.origin;
+// The Mini App is always served from the same origin as the bot/API
+// combined server. We intentionally do NOT honor ?api= / ?bot= URL params —
+// older bot builds stamped them with http://localhost:3001 (when
+// BOT_PUBLIC_URL env wasn't set), which is unreachable from the user's
+// phone and blocked as mixed-content from an HTTPS page.
+const apiBase = location.origin;
+const botBase = location.origin;
 const wcProjectId = params.get("wcProjectId") ?? "";
 
 const $task = document.getElementById("task");
@@ -44,10 +49,9 @@ async function loadSession() {
     return;
   }
   setStatus("Loading submission…");
+  const url = `${botBase}/session/${encodeURIComponent(sessionId)}`;
   try {
-    const res = await fetch(`${botBase}/session/${encodeURIComponent(sessionId)}`, {
-      cache: "no-store",
-    });
+    const res = await fetch(url, { cache: "no-store" });
     if (res.status === 404) {
       fail("Session expired. Go back to chat, open /inbox and pick the task again.");
       return;
@@ -64,7 +68,7 @@ async function loadSession() {
     $pay.disabled = false;
     setStatus("");
   } catch (err) {
-    fail("Couldn't load submission: " + (err?.message ?? String(err)));
+    fail(`Couldn't load submission from ${url}: ${err?.message ?? String(err)}`);
   }
 }
 

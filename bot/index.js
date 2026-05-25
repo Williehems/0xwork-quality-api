@@ -445,10 +445,10 @@ bot.callbackQuery(/^confirm:(.+)$/, async (ctx) => {
   clearState(ctx.from.id);
 
   if (MINIAPP_READY) {
+    // Mini App is same-origin with the bot/API combined server, so we don't
+    // pass api/bot URLs as params — the app uses location.origin directly.
     const url =
       `${MINIAPP_URL}?session=${encodeURIComponent(sessionId)}` +
-      `&api=${encodeURIComponent(BOT_PUBLIC_URL)}` +
-      `&bot=${encodeURIComponent(BOT_PUBLIC_URL)}` +
       (REOWN_PROJECT_ID ? `&wcProjectId=${encodeURIComponent(REOWN_PROJECT_ID)}` : "");
     const kb = new InlineKeyboard().webApp("🎯 Pay & Grade", url);
     await ctx.editMessageReplyMarkup({ reply_markup: kb }).catch(() => {});
