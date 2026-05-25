@@ -74,8 +74,14 @@ let walletConnectMod = null;
 async function importWalletConnect() {
   if (walletConnectMod) return walletConnectMod;
   setStatus("Loading wallet library…");
-  walletConnectMod = await import("https://esm.sh/@walletconnect/ethereum-provider@2.17.0");
+  walletConnectMod = await import("https://esm.sh/@walletconnect/ethereum-provider@2.23.9");
   return walletConnectMod;
+}
+
+function maskId(id) {
+  if (!id) return "(empty)";
+  if (id.length <= 8) return `len=${id.length}`;
+  return `${id.slice(0, 4)}…${id.slice(-4)} (len=${id.length})`;
 }
 
 async function ensureWalletConnected(EthereumProvider) {
@@ -87,17 +93,23 @@ async function ensureWalletConnected(EthereumProvider) {
     );
   }
 
-  wcProvider = await EthereumProvider.init({
-    projectId: wcProjectId,
-    chains: [84532], // Base Sepolia
-    showQrModal: true,
-    metadata: {
-      name: "0xWork Quality Check",
-      description: "Pay-per-grade submission grader",
-      url: location.origin,
-      icons: [],
-    },
-  });
+  setStatus(`Connecting to relay (projectId ${maskId(wcProjectId)})…`);
+  try {
+    wcProvider = await EthereumProvider.init({
+      projectId: wcProjectId,
+      chains: [84532], // Base Sepolia
+      showQrModal: true,
+      metadata: {
+        name: "0xWork Quality Check",
+        description: "Pay-per-grade submission grader",
+        url: location.origin,
+        icons: [],
+      },
+    });
+  } catch (e) {
+    const m = e?.message || String(e);
+    throw new Error(`Relay handshake failed (projectId ${maskId(wcProjectId)}): ${m}`);
+  }
 
   if (!wcProvider.session) {
     await wcProvider.connect();
