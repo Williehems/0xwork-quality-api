@@ -29,6 +29,7 @@ const $subMeta = document.getElementById("sub-meta");
 const $pay = document.getElementById("pay");
 const $payLabel = document.getElementById("pay-label");
 const $status = document.getElementById("status");
+const $wcOpen = document.getElementById("wc-open");
 
 let payload = null;
 let wcProvider = null;
@@ -98,7 +99,7 @@ async function ensureWalletConnected(EthereumProvider) {
     const initPromise = EthereumProvider.init({
       projectId: wcProjectId,
       chains: [84532], // Base Sepolia
-      showQrModal: true,
+      showQrModal: false,
       metadata: {
         name: "0xWork Quality Check",
         description: "Pay-per-grade submission grader",
@@ -120,9 +121,14 @@ async function ensureWalletConnected(EthereumProvider) {
 
   wcProvider.on?.("display_uri", (uri) => {
     console.log("[wc] display_uri", uri?.slice(0, 40) + "…");
-    setStatus("Scan QR with your wallet (or open WC link)…");
+    $wcOpen.href = uri;
+    $wcOpen.style.display = "block";
+    setStatus("Tap below — your wallet app will open and ask to approve the pairing.");
   });
-  wcProvider.on?.("connect", () => console.log("[wc] connect"));
+  wcProvider.on?.("connect", () => {
+    console.log("[wc] connect");
+    $wcOpen.style.display = "none";
+  });
   wcProvider.on?.("disconnect", (e) => console.log("[wc] disconnect", e));
 
   if (!wcProvider.session) {
@@ -194,6 +200,7 @@ async function payAndGrade() {
     setStatus("Error: " + msg, "err");
     $pay.disabled = false;
     setBtnBusy(false);
+    $wcOpen.style.display = "none";
   }
 }
 
