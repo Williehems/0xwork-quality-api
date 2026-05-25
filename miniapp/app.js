@@ -20,21 +20,25 @@ tg?.expand();
 
 const params = new URLSearchParams(location.search);
 const sessionId = params.get("session");
-const apiBase = params.get("api") ?? "";
-const botBase = params.get("bot") ?? "";
+// Mini App is served from the same origin as the bot/API combined server,
+// so default to location.origin instead of trusting URL params (which the bot
+// can't fill in if BOT_PUBLIC_URL env isn't set).
+const apiBase = params.get("api") || location.origin;
+const botBase = params.get("bot") || location.origin;
 const wcProjectId = params.get("wcProjectId") ?? "";
 
 const $task = document.getElementById("task");
 const $subMeta = document.getElementById("sub-meta");
 const $pay = document.getElementById("pay");
+const $payLabel = document.getElementById("pay-label");
 const $status = document.getElementById("status");
 
 let payload = null;
 let wcProvider = null;
 
 async function loadSession() {
-  if (!sessionId || !botBase) {
-    fail("Missing session or bot URL — open this from the Telegram bot.");
+  if (!sessionId) {
+    fail("Missing session — open this from the Telegram bot.");
     return;
   }
   try {
@@ -46,8 +50,9 @@ async function loadSession() {
     if (!res.ok) throw new Error(`bot ${res.status}`);
     payload = await res.json();
     $task.textContent = payload.requirements?.title ?? "(untitled)";
-    $subMeta.textContent =
-      `${String(payload.submission ?? "").split(/\s+/).filter(Boolean).length} words`;
+    const words = String(payload.submission ?? "").split(/\s+/).filter(Boolean).length;
+    const type = payload.task_type ? `${payload.task_type} · ` : "";
+    $subMeta.textContent = `${type}${words.toLocaleString()} word${words === 1 ? "" : "s"}`;
   } catch (err) {
     fail("Couldn't load submission: " + (err.message ?? String(err)));
   }
@@ -83,14 +88,14 @@ async function ensureWalletConnected() {
 async function payAndGrade() {
   if (!payload) return;
   $pay.disabled = true;
-  $status.className = "status";
+  setBtnBusy(true);
   try {
-    $status.textContent = "Opening wallet…";
+    setStatus("Opening wallet…", "info");
     const provider = await ensureWalletConnected();
     const [address] = provider.accounts;
     if (!address) throw new Error("Wallet did not return an account.");
 
-    $status.textContent = `Wallet paired (${short(address)}). Preparing payment…`;
+    setStatus(`Wallet paired (${short(address)}). Preparing payment…`, "info");
     const walletClient = createWalletClient({
       account: address,
       chain: baseSepolia,
@@ -99,7 +104,7 @@ async function payAndGrade() {
 
     const fetchWithPayment = wrapFetchWithPayment(fetch, walletClient);
 
-    $status.textContent = "Sign the payment in your wallet…";
+    setStatus("Sign the payment in your wallet…", "info");
     const res = await fetchWithPayment(`${apiBase}/check`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -117,19 +122,19 @@ async function payAndGrade() {
     }
 
     const verdict = await res.json();
-    $status.textContent = "Graded. Returning verdict to chat…";
+    setStatus("Graded. Returning verdict to chat…", "ok");
 
     if (tg) {
       tg.sendData(JSON.stringify(verdict));
       tg.close();
     } else {
-      $status.textContent = JSON.stringify(verdict, null, 2);
+      setStatus(JSON.stringify(verdict, null, 2), "ok");
     }
   } catch (err) {
     const msg = err?.shortMessage || err?.message || String(err);
-    $status.textContent = "Error: " + msg;
-    $status.className = "status err";
+    setStatus("Error: " + msg, "err");
     $pay.disabled = false;
+    setBtnBusy(false);
   }
 }
 
@@ -137,9 +142,23 @@ function short(addr) {
   return addr.length > 12 ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : addr;
 }
 
-function fail(msg) {
+function setStatus(msg, kind) {
   $status.textContent = msg;
-  $status.className = "status err";
+  $status.className = "status" + (kind === "err" ? " err" : kind === "ok" ? " ok" : kind === "info" ? " info" : "");
+}
+
+function setBtnBusy(busy) {
+  if (busy) {
+    $pay.classList.add("busy");
+    if ($payLabel) $payLabel.textContent = "Working…";
+  } else {
+    $pay.classList.remove("busy");
+    if ($payLabel) $payLabel.textContent = "Pair wallet & pay";
+  }
+}
+
+function fail(msg) {
+  setStatus(msg, "err");
   $pay.disabled = true;
 }
 

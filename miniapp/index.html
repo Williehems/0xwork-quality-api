@@ -9,43 +9,193 @@
       :root {
         color-scheme: light dark;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        --bg: var(--tg-theme-bg-color, #fff);
+        --text: var(--tg-theme-text-color, #111);
+        --hint: var(--tg-theme-hint-color, #888);
+        --btn: var(--tg-theme-button-color, #2481cc);
+        --btn-text: var(--tg-theme-button-text-color, #fff);
+        --link: var(--tg-theme-link-color, #2481cc);
+        --section-bg: var(--tg-theme-secondary-bg-color, #f4f4f5);
       }
+      * { box-sizing: border-box; }
       body {
         margin: 0;
         padding: 20px;
-        background: var(--tg-theme-bg-color, #fff);
-        color: var(--tg-theme-text-color, #111);
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at 0% 0%, color-mix(in srgb, var(--btn) 18%, transparent) 0%, transparent 45%),
+          radial-gradient(circle at 100% 100%, color-mix(in srgb, var(--btn) 10%, transparent) 0%, transparent 50%),
+          var(--bg);
+        color: var(--text);
       }
-      h1 { font-size: 18px; margin: 0 0 16px; }
-      .row { margin: 12px 0; font-size: 14px; }
-      .label { color: var(--tg-theme-hint-color, #888); }
-      .price { font-size: 28px; font-weight: 600; margin: 24px 0 8px; }
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 20px;
+      }
+      .logo {
+        font-size: 17px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .logo .bolt { color: var(--btn); }
+      .chip {
+        font-size: 11px;
+        font-weight: 600;
+        padding: 4px 9px;
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--btn) 14%, transparent);
+        color: var(--btn);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .card {
+        background: var(--section-bg);
+        border-radius: 14px;
+        padding: 12px 14px;
+        margin-bottom: 10px;
+      }
+      .card-label {
+        font-size: 11px;
+        color: var(--hint);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin-bottom: 4px;
+        font-weight: 600;
+      }
+      .card-value {
+        font-size: 14px;
+        line-height: 1.4;
+        word-break: break-word;
+      }
+      .price-card {
+        margin-top: 22px;
+        padding: 18px 16px;
+        border-radius: 16px;
+        background:
+          linear-gradient(135deg,
+            color-mix(in srgb, var(--btn) 18%, transparent) 0%,
+            color-mix(in srgb, var(--btn) 6%, transparent) 100%);
+        border: 1px solid color-mix(in srgb, var(--btn) 22%, transparent);
+        text-align: center;
+      }
+      .price {
+        font-size: 36px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        line-height: 1;
+        margin-bottom: 4px;
+      }
+      .price-unit {
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--hint);
+        margin-left: 2px;
+      }
+      .price-note {
+        font-size: 12px;
+        color: var(--hint);
+        margin-top: 8px;
+      }
       button {
+        margin-top: 18px;
         width: 100%;
-        padding: 14px;
+        padding: 15px;
         font-size: 16px;
         font-weight: 600;
         border: none;
-        border-radius: 12px;
-        background: var(--tg-theme-button-color, #2481cc);
-        color: var(--tg-theme-button-text-color, #fff);
+        border-radius: 14px;
+        background: var(--btn);
+        color: var(--btn-text);
         cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        transition: transform 0.05s ease, opacity 0.15s ease;
       }
-      button:disabled { opacity: 0.5; cursor: progress; }
-      .status { margin-top: 16px; font-size: 13px; color: var(--tg-theme-hint-color, #888); white-space: pre-wrap; }
-      .err { color: #d33; }
+      button:active:not(:disabled) { transform: scale(0.98); }
+      button:disabled { opacity: 0.55; cursor: progress; }
+      .btn-icon { font-size: 18px; line-height: 1; }
+      button.busy .btn-icon { display: none; }
+      button.busy::before {
+        content: "";
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        border: 2px solid currentColor;
+        border-top-color: transparent;
+        animation: spin 0.8s linear infinite;
+        margin-right: 2px;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .status {
+        margin-top: 14px;
+        font-size: 13px;
+        color: var(--hint);
+        white-space: pre-wrap;
+        text-align: center;
+        min-height: 18px;
+        line-height: 1.4;
+      }
+      .status.info::before {
+        content: "";
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--btn);
+        margin-right: 6px;
+        animation: pulse 1.4s ease-in-out infinite;
+        vertical-align: middle;
+      }
+      .status.ok { color: #1f9d55; }
+      .status.err { color: #d33; }
+      @keyframes pulse {
+        0%, 100% { opacity: 0.4; transform: scale(0.9); }
+        50% { opacity: 1; transform: scale(1.1); }
+      }
+      .footer {
+        margin-top: 24px;
+        font-size: 11px;
+        color: var(--hint);
+        text-align: center;
+        opacity: 0.7;
+      }
     </style>
   </head>
   <body>
-    <h1>Quality Check</h1>
-    <div class="row"><span class="label">Task:</span> <span id="task">…</span></div>
-    <div class="row"><span class="label">Submission:</span> <span id="sub-meta">…</span></div>
+    <div class="header">
+      <div class="logo"><span class="bolt">⚡</span> 0xWork Quality</div>
+      <div class="chip">Base Sepolia</div>
+    </div>
 
-    <div class="price">0.10 USDC</div>
-    <div class="row label">Paid on Base via x402. Funds go directly to the API operator.</div>
+    <div class="card">
+      <div class="card-label">Task</div>
+      <div class="card-value" id="task">…</div>
+    </div>
 
-    <button id="pay">Pair wallet &amp; pay</button>
+    <div class="card">
+      <div class="card-label">Submission</div>
+      <div class="card-value" id="sub-meta">…</div>
+    </div>
+
+    <div class="price-card">
+      <div class="price">0.10<span class="price-unit"> USDC</span></div>
+      <div class="price-note">Paid via x402 · funds go to API operator</div>
+    </div>
+
+    <button id="pay">
+      <span class="btn-icon">👛</span>
+      <span id="pay-label">Pair wallet &amp; pay</span>
+    </button>
     <div class="status" id="status"></div>
+
+    <div class="footer">x402 protocol · grading by Llama 3.3</div>
 
     <script type="module" src="./app.js"></script>
   </body>
