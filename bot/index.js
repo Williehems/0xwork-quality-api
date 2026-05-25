@@ -679,9 +679,34 @@ http.listen(BOT_PORT, () => {
 });
 
 await registerCommands().catch((e) => console.warn("[bot] setMyCommands failed:", e.message));
-bot.start({
-  drop_pending_updates: true,
-  onStart: (me) => console.log(`[bot] started as @${me.username}`),
+
+// Telegram only allows one getUpdates poller per bot at a time. On Render
+// free-tier redeploys the old instance can still be polling for up to ~30s
+// after the new one starts, which makes getUpdates return 409. Retry with
+// backoff instead of crashing the process.
+async function startWithRetry() {
+  for (let attempt = 1; attempt <= 8; attempt++) {
+    try {
+      await bot.start({
+        drop_pending_updates: true,
+        onStart: (me) => console.log(`[bot] started as @${me.username}`),
+      });
+      return;
+    } catch (err) {
+      if (err?.error_code === 409 && attempt < 8) {
+        const wait = Math.min(5000 * attempt, 30000);
+        console.warn(`[bot] 409 conflict (old instance still polling); retry ${attempt}/8 in ${wait}ms`);
+        await new Promise((r) => setTimeout(r, wait));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
+startWithRetry().catch((err) => {
+  console.error("[bot] fatal start error:", err);
+  process.exit(1);
 });
 
 // ── Renderers ───────────────────────────────────────────────────────────
