@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Gavel pfp — pick a variation</title>
+    <style>
+      :root {
+        --tg-blue: #3390ec;
+        --tg-dark: #17212b;
+        --tg-darker: #0e1621;
+        --text: #e7ecf0;
+        --text-2: #8b97a4;
+        --surface: #1c2733;
+        --border: #2a3543;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--tg-darker);
+        color: var(--text);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", sans-serif;
+        padding: 40px 20px 80px;
+      }
+      .wrap {
+        max-width: 1100px;
+        margin: 0 auto;
+      }
+      h1 {
+        font-size: 28px;
+        font-weight: 700;
+        margin: 0 0 8px;
+        letter-spacing: -0.02em;
+      }
+      .lede {
+        color: var(--text-2);
+        font-size: 14px;
+        margin: 0 0 36px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+        gap: 28px;
+      }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 24px;
+      }
+      .card h2 {
+        font-size: 16px;
+        font-weight: 700;
+        margin: 0 0 4px;
+        letter-spacing: -0.01em;
+      }
+      .card .sub {
+        color: var(--text-2);
+        font-size: 12.5px;
+        margin: 0 0 18px;
+        line-height: 1.5;
+      }
+      .previews {
+        display: flex;
+        align-items: center;
+        gap: 24px;
+        margin-bottom: 18px;
+      }
+      .preview-square {
+        width: 200px;
+        height: 200px;
+        border-radius: 10px;
+        overflow: hidden;
+        flex-shrink: 0;
+      }
+      .preview-circle {
+        width: 100px;
+        height: 100px;
+        border-radius: 50%;
+        overflow: hidden;
+        flex-shrink: 0;
+      }
+      .preview-tiny {
+        width: 50px;
+        height: 50px;
+        border-radius: 50%;
+        overflow: hidden;
+        flex-shrink: 0;
+      }
+      .preview-label {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        align-items: center;
+        font-size: 10px;
+        color: var(--text-2);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      .preview-square svg,
+      .preview-circle svg,
+      .preview-tiny svg { width: 100%; height: 100%; display: block; }
+      .actions {
+        display: flex;
+        gap: 10px;
+      }
+      button {
+        flex: 1;
+        padding: 12px 16px;
+        background: var(--tg-blue);
+        color: #fff;
+        border: none;
+        border-radius: 10px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        font-family: inherit;
+      }
+      button:hover { background: #2a7fd4; }
+      button.secondary {
+        background: transparent;
+        color: var(--text-2);
+        border: 1px solid var(--border);
+      }
+      button.secondary:hover { color: var(--text); border-color: var(--text-2); }
+      .footer {
+        margin-top: 40px;
+        padding-top: 20px;
+        border-top: 1px solid var(--border);
+        font-size: 12px;
+        color: var(--text-2);
+        line-height: 1.6;
+      }
+      code { background: var(--surface); padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>Gavel — pick a profile picture</h1>
+      <p class="lede">
+        Each card shows the design at 200px (BotFather upload preview), 100px (profile circle), and 50px (chat-list size).
+        Click <strong>Download PNG</strong> on the one you like — upload it to BotFather with <code>/setuserpic</code>.
+      </p>
+
+      <div class="grid" id="grid"></div>
+
+      <div class="footer">
+        All variations use the Telegram official blue (<code>#3390EC</code>) and dark theme (<code>#17212B</code>).
+        Each PNG is rendered at 512&times;512, the size BotFather wants. The "Save SVG" buttons give you the vector
+        source in case you want to tweak it in Figma/Illustrator first.
+      </div>
+    </div>
+
+    <!-- Templates for each SVG variation. Each one is a self-contained 512x512 SVG. -->
+    <template id="v1">
+      <!-- V1 — "Strike": bold filled gavel on solid Telegram blue. Maximum legibility. -->
+      <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+        <rect width="512" height="512" fill="#3390EC"/>
+        <!-- Sound block / podium -->
+        <rect x="96" y="402" width="320" height="38" rx="19" fill="#FFFFFF"/>
+        <!-- Gavel: handle + head, slightly tilted as if mid-strike -->
+        <g transform="rotate(-10 256 256)">
+          <!-- Handle, top → just above the head -->
+          <rect x="242" y="72" width="28" height="232" rx="14" fill="#FFFFFF"/>
+          <!-- Head: wider block at the bottom of the handle -->
+          <rect x="148" y="288" width="216" height="88" rx="22" fill="#FFFFFF"/>
+        </g>
+      </svg>
+    </template>
+
+    <template id="v2">
+      <!-- V2 — "Line": outlined gavel, matches the Mini App header aesthetic. Refined. -->
+      <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+        <rect width="512" height="512" fill="#3390EC"/>
+        <g fill="none" stroke="#FFFFFF" stroke-width="34" stroke-linecap="round" stroke-linejoin="round">
+          <!-- Sound block -->
+          <line x1="116" y1="416" x2="396" y2="416"/>
+          <g transform="rotate(-10 256 256)">
+            <!-- Handle -->
+            <line x1="256" y1="90" x2="256" y2="290"/>
+            <!-- Head — drawn as a closed quadrilateral to read as a block -->
+            <rect x="156" y="286" width="200" height="80" rx="18"/>
+          </g>
+        </g>
+      </svg>
+    </template>
+
+    <template id="v3">
+      <!-- V3 — "Inverted": dark navy bg with Telegram-blue gavel. Sophisticated. -->
+      <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+        <rect width="512" height="512" fill="#17212B"/>
+        <rect x="96" y="402" width="320" height="38" rx="19" fill="#3390EC"/>
+        <g transform="rotate(-10 256 256)">
+          <rect x="242" y="72" width="28" height="232" rx="14" fill="#3390EC"/>
+          <rect x="148" y="288" width="216" height="88" rx="22" fill="#3390EC"/>
+        </g>
+      </svg>
+    </template>
+
+    <template id="v4">
+      <!-- V4 — "Mark": abstract — just the head + impact ticks. Ultra minimal. -->
+      <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+        <rect width="512" height="512" fill="#3390EC"/>
+        <!-- Head only, centered, slightly tilted -->
+        <g transform="rotate(-12 256 256)">
+          <rect x="136" y="216" width="240" height="100" rx="26" fill="#FFFFFF"/>
+          <!-- Subtle handle stub on top -->
+          <rect x="244" y="156" width="24" height="68" rx="12" fill="#FFFFFF"/>
+        </g>
+        <!-- Impact ticks suggesting motion / strike -->
+        <g fill="#FFFFFF" opacity="0.85">
+          <rect x="64"  y="244" width="38" height="14" rx="7"/>
+          <rect x="48"  y="282" width="26" height="14" rx="7"/>
+          <rect x="410" y="244" width="38" height="14" rx="7"/>
+          <rect x="438" y="282" width="26" height="14" rx="7"/>
+        </g>
+      </svg>
+    </template>
+
+    <script>
+      const variations = [
+        { id: "v1", name: "Strike",   sub: "Bold filled gavel on Telegram blue. Maximum legibility at tiny sizes — best chat-list readability." },
+        { id: "v2", name: "Line",     sub: "Outlined gavel, matches the Mini App header. More refined, slightly less punchy at 50px." },
+        { id: "v3", name: "Inverted", sub: "Dark navy background with a Telegram-blue gavel. Pro/sophisticated feel; stands out in light-themed Telegram." },
+        { id: "v4", name: "Mark",     sub: "Abstract — just the head plus impact ticks. Most minimal; reads as a logomark rather than a literal gavel." },
+      ];
+
+      function svgString(templateId) {
+        const tpl = document.getElementById(templateId);
+        const svg = tpl.content.querySelector("svg").cloneNode(true);
+        // Ensure xmlns is present for serialization.
+        svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+        return new XMLSerializer().serializeToString(svg);
+      }
+
+      function downloadBlob(blob, filename) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+
+      function downloadSVG(templateId, name) {
+        const str = svgString(templateId);
+        const blob = new Blob([str], { type: "image/svg+xml;charset=utf-8" });
+        downloadBlob(blob, `gavel-${name.toLowerCase()}.svg`);
+      }
+
+      async function downloadPNG(templateId, name) {
+        const str = svgString(templateId);
+        const blob = new Blob([str], { type: "image/svg+xml;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        try {
+          const img = new Image();
+          await new Promise((resolve, reject) => {
+            img.onload = resolve;
+            img.onerror = reject;
+            img.src = url;
+          });
+          const canvas = document.createElement("canvas");
+          canvas.width = 512;
+          canvas.height = 512;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, 512, 512);
+          await new Promise((resolve) => {
+            canvas.toBlob((pngBlob) => {
+              downloadBlob(pngBlob, `gavel-${name.toLowerCase()}.png`);
+              resolve();
+            }, "image/png");
+          });
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+      }
+
+      const grid = document.getElementById("grid");
+      for (const v of variations) {
+        const card = document.createElement("div");
+        card.className = "card";
+        card.innerHTML = `
+          <h2>${v.name}</h2>
+          <p class="sub">${v.sub}</p>
+          <div class="previews">
+            <div class="preview-label">
+              <div class="preview-square">${svgString(v.id)}</div>
+              <span>512px</span>
+            </div>
+            <div class="preview-label">
+              <div class="preview-circle">${svgString(v.id)}</div>
+              <span>100px</span>
+            </div>
+            <div class="preview-label">
+              <div class="preview-tiny">${svgString(v.id)}</div>
+              <span>50px</span>
+            </div>
+          </div>
+          <div class="actions">
+            <button data-png="${v.id}" data-name="${v.name}">Download PNG</button>
+            <button class="secondary" data-svg="${v.id}" data-name="${v.name}">Save SVG</button>
+          </div>
+        `;
+        grid.appendChild(card);
+      }
+
+      grid.addEventListener("click", (e) => {
+        const png = e.target.dataset.png;
+        const svg = e.target.dataset.svg;
+        const name = e.target.dataset.name;
+        if (png) downloadPNG(png, name);
+        else if (svg) downloadSVG(svg, name);
+      });
+    </script>
+  </body>
+</html>
