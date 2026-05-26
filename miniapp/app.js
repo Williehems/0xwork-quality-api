@@ -85,6 +85,24 @@ function maskId(id) {
   return `${id.slice(0, 4)}…${id.slice(-4)} (len=${id.length})`;
 }
 
+// Telegram WebView blocks/partitions IndexedDB on some Android builds.
+// WC's @walletconnect/keyvaluestorage falls through to IDB by default,
+// and a blocked IDB request just hangs forever — that's the silent
+// "stuck at Connecting to relay" symptom with no error from our timeout
+// (no exception is raised, init() just never resolves). Hand WC an
+// in-memory store so it never touches IDB.
+function createMemStorage() {
+  const m = new Map();
+  return {
+    async init() {},
+    async getKeys() { return [...m.keys()]; },
+    async getEntries() { return [...m.entries()]; },
+    async getItem(key) { return m.get(key); },
+    async setItem(key, value) { m.set(key, value); },
+    async removeItem(key) { m.delete(key); },
+  };
+}
+
 async function ensureWalletConnected(EthereumProvider) {
   if (wcProvider?.accounts?.length) return wcProvider;
 
@@ -94,12 +112,23 @@ async function ensureWalletConnected(EthereumProvider) {
     );
   }
 
-  setStatus(`Connecting to relay (projectId ${maskId(wcProjectId)})…`);
+  // Stopwatch — proves setTimeout/setInterval fire even if WC's init
+  // is hanging on a blocked storage call. If this counter freezes, the
+  // main thread is blocked; if it keeps counting past 30 with no error,
+  // our Promise.race has a bug.
+  let elapsed = 0;
+  setStatus(`Connecting to relay (0s, projectId ${maskId(wcProjectId)})…`);
+  const ticker = setInterval(() => {
+    elapsed++;
+    setStatus(`Connecting to relay (${elapsed}s, projectId ${maskId(wcProjectId)})…`);
+  }, 1000);
+
   try {
     const initPromise = EthereumProvider.init({
       projectId: wcProjectId,
       chains: [84532], // Base Sepolia
       showQrModal: false,
+      storage: createMemStorage(),
       metadata: {
         name: "0xWork Quality Check",
         description: "Pay-per-grade submission grader",
@@ -109,21 +138,27 @@ async function ensureWalletConnected(EthereumProvider) {
     });
     const timeout = new Promise((_, rej) =>
       setTimeout(() => rej(new Error(
-        "relay never responded after 20s — projectId likely not allowed for this origin (" +
+        `relay never responded after 30s (elapsed=${elapsed}s) — projectId likely not allowed for this origin (` +
         location.origin + "). Re-check the Reown allowed-origins list."
-      )), 20000),
+      )), 30000),
     );
     wcProvider = await Promise.race([initPromise, timeout]);
   } catch (e) {
+    clearInterval(ticker);
     const m = e?.message || String(e);
-    throw new Error(`Relay handshake failed (projectId ${maskId(wcProjectId)}): ${m}`);
+    throw new Error(`Relay handshake failed (projectId ${maskId(wcProjectId)}, t=${elapsed}s): ${m}`);
   }
+  clearInterval(ticker);
 
   wcProvider.on?.("display_uri", (uri) => {
     console.log("[wc] display_uri", uri?.slice(0, 40) + "…");
-    $wcOpen.href = uri;
+    // Use a wallet universal-link wrapper so Telegram's WebView hands
+    // the URL to MetaMask Mobile via iOS/Android Universal Links,
+    // instead of a raw wc: scheme which Telegram tends to swallow.
+    const universalLink = "https://metamask.app.link/wc?uri=" + encodeURIComponent(uri);
+    $wcOpen.href = universalLink;
     $wcOpen.style.display = "block";
-    setStatus("Tap below — your wallet app will open and ask to approve the pairing.");
+    setStatus("Tap below — opens MetaMask Mobile to approve the pairing.");
   });
   wcProvider.on?.("connect", () => {
     console.log("[wc] connect");
