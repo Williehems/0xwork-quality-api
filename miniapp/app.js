@@ -87,8 +87,12 @@ function maskId(id) {
 
 // initData is non-empty when launched from inside Telegram. In external
 // browsers telegram-web-app.js still loads (so `tg` exists), but initData
-// is empty.
+// is normally empty. Caveat: after a `tg.openLink` bounce the URL hash
+// may still carry tgWebAppData=, and telegram-web-app.js re-parses that
+// in the external browser too — which would make this falsely return
+// true. Honor an explicit ?fromTgBounce=1 sentinel to short-circuit.
 function isInTelegramWebView() {
+  if (params.get("fromTgBounce") === "1") return false;
   return !!(tg?.initData);
 }
 
@@ -100,12 +104,22 @@ function isInTelegramWebView() {
 // verdict POST still notifies the bot so the user gets the result
 // in chat.
 function showOpenInBrowserPrompt() {
+  // Strip the `#tgWebAppData=...` hash so the external browser doesn't
+  // re-init as a TG WebApp, and add ?fromTgBounce=1 so our detector
+  // short-circuits even if some hash slips through.
+  const url = new URL(window.location.href);
+  url.hash = "";
+  url.searchParams.set("fromTgBounce", "1");
+  const cleanUrl = url.toString();
   $wcOpen.textContent = "Open in browser to pay";
-  $wcOpen.href = "#";
+  $wcOpen.href = cleanUrl;
   $wcOpen.style.display = "block";
   $wcOpen.onclick = (e) => {
-    e.preventDefault();
-    if (tg?.openLink) tg.openLink(window.location.href);
+    if (tg?.openLink) {
+      e.preventDefault();
+      tg.openLink(cleanUrl);
+    }
+    // else: fall through to default anchor behavior (already not in TG)
   };
   setStatus(
     "Wallet pairing doesn't work inside Telegram. Tap to continue in your browser — the verdict will still be sent to this chat.",
