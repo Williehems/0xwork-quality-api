@@ -2,261 +2,626 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
     <title>0xWork Quality Check</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@500;600&display=swap"
+    />
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
       :root {
+        --bg: #0a0a0c;
+        --bg-elev: #131318;
+        --surface: #181820;
+        --surface-2: #1f1f29;
+        --border: #2a2a34;
+        --border-strong: #3a3a48;
+        --text: #f5f5f7;
+        --text-2: #a0a0b0;
+        --text-3: #6a6a78;
+        --accent: #8b5cf6;
+        --accent-2: #a78bfa;
+        --gold: #f59e0b;
+        --gold-soft: #fbbf24;
+        --warn: #ff9f0a;
+        --ok: #34d399;
+        --err: #f87171;
+        --ring: rgba(139, 92, 246, 0.35);
+        --radius-sm: 8px;
+        --radius: 14px;
+        --radius-lg: 18px;
+        --shadow-1: 0 1px 0 rgba(255,255,255,0.04) inset, 0 1px 2px rgba(0,0,0,0.4);
+        --shadow-2: 0 4px 24px rgba(0,0,0,0.6);
         color-scheme: dark;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
-
-        --bg: #000000;
-        --text: #ffffff;
-        --hint: #8e8e93;
-        --section-bg: #1c1c1d;
-        --accent: #2481cc;
-        --accent-text: #ffffff;
-        --link: #6ab7ff;
-        --err: #ff453a;
-        --ok: #34c759;
       }
       * { box-sizing: border-box; }
       html, body { height: 100%; }
       body {
         margin: 0;
-        padding: 20px;
         background: var(--bg);
         color: var(--text);
+        font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        font-size: 15px;
+        line-height: 1.5;
+        -webkit-font-smoothing: antialiased;
         -webkit-tap-highlight-color: transparent;
+        min-height: 100dvh;
       }
-      .header {
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        background:
+          radial-gradient(60% 40% at 50% 0%, rgba(139, 92, 246, 0.08), transparent 70%),
+          radial-gradient(40% 30% at 80% 30%, rgba(245, 158, 11, 0.04), transparent 70%);
+        pointer-events: none;
+        z-index: 0;
+      }
+
+      .wrap {
+        position: relative;
+        z-index: 1;
+        padding: 20px max(16px, env(safe-area-inset-left)) calc(28px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-right));
+        max-width: 980px;
+        margin: 0 auto;
+        min-height: 100dvh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      header {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        margin-bottom: 22px;
+        margin-bottom: 20px;
       }
-      .logo {
-        font-size: 17px;
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-family: "Space Grotesk", "Inter", sans-serif;
         font-weight: 600;
+        font-size: 16px;
         letter-spacing: -0.01em;
       }
+      .brand-mark {
+        width: 26px;
+        height: 26px;
+        border-radius: 7px;
+        background: linear-gradient(135deg, var(--accent), var(--gold));
+        display: grid;
+        place-items: center;
+        color: #0a0a0c;
+        font-weight: 700;
+        font-size: 13px;
+        font-family: "JetBrains Mono", monospace;
+        box-shadow: 0 0 0 1px rgba(255,255,255,0.06) inset;
+      }
       .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
         font-size: 11px;
         font-weight: 600;
-        padding: 4px 10px;
+        padding: 5px 10px;
         border-radius: 999px;
-        background: var(--section-bg);
-        color: var(--hint);
+        background: var(--surface);
+        color: var(--text-2);
+        border: 1px solid var(--border);
         text-transform: uppercase;
-        letter-spacing: 0.04em;
+        letter-spacing: 0.05em;
       }
+      .chip .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--ok);
+        box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.12);
+      }
+
+      /* ── Layout ── */
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 14px;
+        flex: 1;
+      }
+      @media (min-width: 860px) {
+        .wrap { padding-top: 36px; padding-bottom: 36px; }
+        .grid {
+          grid-template-columns: 1.05fr 1fr;
+          gap: 22px;
+          align-items: start;
+        }
+        .col-pay { position: sticky; top: 24px; }
+      }
+
+      .col {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        min-width: 0;
+      }
+
+      /* ── Cards ── */
       .card {
-        background: var(--section-bg);
-        border-radius: 12px;
-        padding: 12px 14px;
-        margin-bottom: 8px;
+        background: var(--bg-elev);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 14px 16px;
+        box-shadow: var(--shadow-1);
       }
       .card-label {
-        font-size: 11px;
-        color: var(--hint);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 10.5px;
+        color: var(--text-3);
         text-transform: uppercase;
-        letter-spacing: 0.06em;
-        margin-bottom: 4px;
+        letter-spacing: 0.08em;
+        margin-bottom: 6px;
         font-weight: 600;
       }
+      .card-label svg { opacity: 0.7; }
       .card-value {
-        font-size: 14px;
-        line-height: 1.4;
-        word-break: break-word;
+        font-size: 15px;
+        line-height: 1.45;
         color: var(--text);
+        word-break: break-word;
       }
-      .price-block {
-        text-align: center;
-        margin: 28px 0 8px;
+      .card-value.title {
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 600;
+        font-size: 17px;
+        letter-spacing: -0.01em;
+      }
+      .meta-line {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 10px;
+        font-size: 13px;
+        color: var(--text-2);
+      }
+      .meta-line .sep {
+        opacity: 0.4;
+      }
+      .meta-line strong {
+        color: var(--text);
+        font-weight: 600;
+      }
+
+      /* Skeleton */
+      .skeleton {
+        background: linear-gradient(90deg, var(--surface) 0%, var(--surface-2) 50%, var(--surface) 100%);
+        background-size: 200% 100%;
+        border-radius: 4px;
+        animation: shimmer 1.4s ease-in-out infinite;
+        color: transparent;
+        display: inline-block;
+        min-width: 80px;
+      }
+      @keyframes shimmer {
+        0% { background-position: 100% 0; }
+        100% { background-position: -100% 0; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .skeleton { animation: none; }
+      }
+
+      /* ── Price block ── */
+      .pay-card {
+        background:
+          radial-gradient(120% 80% at 50% 0%, rgba(245, 158, 11, 0.08), transparent 60%),
+          var(--bg-elev);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: 22px 18px 18px;
+        position: relative;
+        overflow: hidden;
+      }
+      .pay-card::before {
+        content: "";
+        position: absolute;
+        top: -1px; left: -1px; right: -1px; height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(245, 158, 11, 0.4), transparent);
+      }
+      .price-row {
+        display: flex;
+        align-items: baseline;
+        justify-content: center;
+        gap: 6px;
       }
       .price {
-        font-size: 36px;
-        font-weight: 600;
-        letter-spacing: -0.02em;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: clamp(40px, 8vw, 52px);
+        font-weight: 700;
+        letter-spacing: -0.03em;
         line-height: 1;
-        color: var(--text);
+        background: linear-gradient(180deg, var(--gold-soft), var(--gold));
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+        font-variant-numeric: tabular-nums;
       }
       .price-unit {
-        font-size: 18px;
-        font-weight: 500;
-        color: var(--hint);
-        margin-left: 4px;
-      }
-      .price-note {
-        font-size: 12px;
-        color: var(--hint);
-        margin-top: 8px;
-      }
-      button {
-        margin-top: 16px;
-        width: 100%;
-        padding: 15px;
+        font-family: "Inter", sans-serif;
         font-size: 16px;
         font-weight: 600;
-        border: none;
-        border-radius: 12px;
-        background: var(--accent);
-        color: var(--accent-text);
-        cursor: pointer;
-        transition: opacity 0.15s ease;
+        color: var(--text-2);
+        letter-spacing: 0.02em;
       }
-      button:active:not(:disabled) { opacity: 0.85; }
-      button:disabled { opacity: 0.4; cursor: not-allowed; }
-      .wc-link {
-        display: block;
-        margin-top: 10px;
+      .price-note {
+        margin-top: 8px;
+        font-size: 12px;
+        color: var(--text-3);
+        text-align: center;
+        letter-spacing: 0.02em;
+      }
+      .price-note code {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 11px;
+        color: var(--text-2);
+        background: var(--surface);
+        padding: 1px 6px;
+        border-radius: 4px;
+      }
+
+      /* ── Connection picker ── */
+      .conn {
+        margin-top: 16px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 4px;
+        background: var(--surface);
+      }
+      .conn-opt {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 11px 12px;
+        border-radius: calc(var(--radius) - 4px);
+        cursor: pointer;
+        transition: background 150ms ease;
+        font-size: 14px;
+        min-height: 44px;
+      }
+      .conn-opt:hover { background: var(--surface-2); }
+      .conn-opt input[type="radio"] {
+        appearance: none;
+        margin: 0;
+        width: 18px;
+        height: 18px;
+        border: 2px solid var(--border-strong);
+        border-radius: 50%;
+        flex-shrink: 0;
+        position: relative;
+        cursor: pointer;
+        margin-top: 1px;
+        transition: border-color 150ms ease;
+      }
+      .conn-opt input[type="radio"]:checked {
+        border-color: var(--accent);
+      }
+      .conn-opt input[type="radio"]:checked::after {
+        content: "";
+        position: absolute;
+        inset: 3px;
+        background: var(--accent);
+        border-radius: 50%;
+      }
+      .conn-opt input[type="radio"]:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 3px var(--ring);
+      }
+      .conn-opt-body {
+        flex: 1;
+        min-width: 0;
+      }
+      .conn-opt-title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: 500;
+      }
+      .conn-opt-sub {
+        font-size: 12px;
+        color: var(--text-3);
+        margin-top: 2px;
+      }
+      .warn-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        color: var(--warn);
+        font-style: normal;
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        padding: 2px 6px;
+        background: rgba(255, 159, 10, 0.1);
+        border-radius: 4px;
+      }
+      #pk-row {
+        padding: 4px 12px 12px;
+      }
+      #pk-input {
         width: 100%;
-        padding: 13px;
+        padding: 11px 12px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 12.5px;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        color: var(--text);
+        border-radius: var(--radius-sm);
+        transition: border-color 150ms ease, box-shadow 150ms ease;
+      }
+      #pk-input:focus {
+        outline: none;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px var(--ring);
+      }
+      .pk-help {
+        color: var(--warn);
+        font-size: 11.5px;
+        margin: 8px 0 0;
+        line-height: 1.5;
+      }
+
+      /* ── Button ── */
+      .cta {
+        margin-top: 14px;
+        width: 100%;
+        padding: 15px 18px;
         font-size: 15px;
         font-weight: 600;
-        text-align: center;
-        text-decoration: none;
-        border-radius: 12px;
-        background: var(--section-bg);
-        color: var(--text);
+        font-family: inherit;
+        border: none;
+        border-radius: var(--radius);
+        background: linear-gradient(180deg, var(--accent-2), var(--accent));
+        color: #fff;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        min-height: 48px;
+        transition: transform 120ms ease, box-shadow 150ms ease, opacity 150ms ease;
+        box-shadow: 0 1px 0 rgba(255,255,255,0.12) inset, 0 6px 16px rgba(139, 92, 246, 0.25);
       }
-      .wc-link:active { opacity: 0.85; }
-      button.busy::before {
-        content: "";
+      .cta:hover:not(:disabled) {
+        box-shadow: 0 1px 0 rgba(255,255,255,0.18) inset, 0 8px 22px rgba(139, 92, 246, 0.35);
+      }
+      .cta:active:not(:disabled) {
+        transform: scale(0.985);
+      }
+      .cta:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 3px var(--ring), 0 6px 16px rgba(139, 92, 246, 0.25);
+      }
+      .cta:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .cta.busy { pointer-events: none; }
+      .cta.busy .spinner {
         display: inline-block;
+      }
+      .spinner {
+        display: none;
         width: 14px;
         height: 14px;
         border-radius: 50%;
         border: 2px solid currentColor;
         border-top-color: transparent;
         animation: spin 0.8s linear infinite;
-        margin-right: 8px;
-        vertical-align: -2px;
       }
       @keyframes spin { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) {
+        .spinner { animation-duration: 1.4s; }
+        .cta { transition: none; }
+      }
+
+      .secondary-link {
+        display: none;
+        margin-top: 10px;
+        padding: 13px 14px;
+        font-size: 14px;
+        font-weight: 500;
+        text-align: center;
+        text-decoration: none;
+        border-radius: var(--radius);
+        background: var(--surface);
+        color: var(--text);
+        border: 1px solid var(--border);
+        transition: background 150ms ease, border-color 150ms ease;
+      }
+      .secondary-link:hover {
+        background: var(--surface-2);
+        border-color: var(--border-strong);
+      }
+      .secondary-link.show { display: block; }
+
       .status {
         margin-top: 14px;
         font-size: 13px;
-        color: var(--hint);
+        color: var(--text-2);
         white-space: pre-wrap;
         text-align: center;
         min-height: 18px;
-        line-height: 1.4;
+        line-height: 1.5;
       }
       .status.ok { color: var(--ok); }
       .status.err { color: var(--err); }
-      .footer {
-        margin-top: 24px;
-        font-size: 11px;
-        color: var(--hint);
+
+      /* ── Return surface (success screen) ── */
+      .return-card {
+        display: none;
         text-align: center;
+        padding: 28px 20px 22px;
       }
-      .conn-method {
-        margin: 16px 0 0 0;
-        padding: 10px 14px 12px;
-        border: 1px solid #2c2c2e;
-        border-radius: 12px;
+      .return-card.show { display: block; }
+      .return-mark {
+        width: 56px;
+        height: 56px;
+        border-radius: 50%;
+        background: rgba(52, 211, 153, 0.12);
+        color: var(--ok);
+        display: grid;
+        place-items: center;
+        margin: 0 auto 14px;
       }
-      .conn-method legend {
-        padding: 0 6px;
-        font-size: 11px;
-        color: var(--hint);
-        text-transform: uppercase;
-        letter-spacing: 0.06em;
+      .return-title {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 20px;
+        font-weight: 600;
+        margin: 0 0 6px;
+        letter-spacing: -0.01em;
       }
-      .conn-opt {
-        display: flex;
+      .return-sub {
+        font-size: 13.5px;
+        color: var(--text-2);
+        margin: 0 0 16px;
+      }
+      .return-cta {
+        display: inline-flex;
         align-items: center;
         gap: 8px;
+        padding: 12px 18px;
         font-size: 14px;
-        padding: 6px 0;
-        cursor: pointer;
-      }
-      .conn-opt input { accent-color: var(--accent); }
-      .warn {
-        color: #ff9f0a;
-        font-style: normal;
-        font-size: 10px;
-        text-transform: uppercase;
-        letter-spacing: 0.06em;
-        margin-left: 6px;
         font-weight: 600;
-      }
-      .warn-body {
-        color: #ff9f0a;
-        font-size: 12px;
-        margin: 8px 0 0 0;
-        line-height: 1.4;
-      }
-      #pk-input {
-        width: 100%;
-        margin-top: 10px;
-        padding: 10px 12px;
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 13px;
-        background: #0d0d0d;
-        border: 1px solid #2c2c2e;
+        background: var(--surface);
         color: var(--text);
-        border-radius: 8px;
+        text-decoration: none;
+        border-radius: var(--radius);
+        border: 1px solid var(--border-strong);
+        transition: background 150ms ease;
       }
-      #pk-input:focus { outline: none; border-color: var(--accent); }
+      .return-cta:hover { background: var(--surface-2); }
+
+      footer {
+        margin-top: 22px;
+        font-size: 11px;
+        color: var(--text-3);
+        text-align: center;
+        letter-spacing: 0.02em;
+      }
+      footer code {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 10.5px;
+      }
     </style>
   </head>
   <body>
-    <div class="header">
-      <div class="logo">0xWork Quality</div>
-      <div class="chip">Base Sepolia</div>
-    </div>
+    <div class="wrap">
+      <header>
+        <div class="brand">
+          <div class="brand-mark">0x</div>
+          0xWork Quality
+        </div>
+        <div class="chip"><span class="dot"></span>Base Sepolia</div>
+      </header>
 
-    <div class="card">
-      <div class="card-label">Task</div>
-      <div class="card-value" id="task">Loading…</div>
-    </div>
+      <div class="grid">
+        <div class="col col-task">
+          <div class="card">
+            <div class="card-label">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+              Task
+            </div>
+            <div class="card-value title" id="task"><span class="skeleton">Loading task</span></div>
+          </div>
 
-    <div class="card">
-      <div class="card-label">Submission</div>
-      <div class="card-value" id="sub-meta">Loading…</div>
-    </div>
+          <div class="card">
+            <div class="card-label">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>
+              Submission
+            </div>
+            <div class="card-value meta-line" id="sub-meta"><span class="skeleton">Loading meta</span></div>
+          </div>
+        </div>
 
-    <div class="price-block">
-      <div class="price">0.10<span class="price-unit">USDC</span></div>
-      <div class="price-note">Paid via x402. Funds go to API operator.</div>
-    </div>
+        <div class="col col-pay">
+          <div class="pay-card">
+            <div class="price-row">
+              <span class="price">0.10</span>
+              <span class="price-unit">USDC</span>
+            </div>
+            <div class="price-note">Paid via <code>x402</code> — funds go to API operator</div>
 
-    <fieldset class="conn-method">
-      <legend>Connection</legend>
-      <label class="conn-opt">
-        <input type="radio" name="conn" value="metamask" checked />
-        <span>Connect MetaMask wallet</span>
-      </label>
-      <label class="conn-opt">
-        <input type="radio" name="conn" value="pk" />
-        <span>Paste private key <em class="warn">testnet only</em></span>
-      </label>
-      <div id="pk-row" hidden>
-        <input
-          type="password"
-          id="pk-input"
-          autocomplete="off"
-          autocapitalize="off"
-          autocorrect="off"
-          spellcheck="false"
-          placeholder="0x… 64 hex chars (Base Sepolia funded)"
-        />
-        <p class="warn-body">
-          The key stays in this browser tab — never sent to our server, never saved. Refresh wipes it. Do not paste a key that holds real funds.
-        </p>
+            <fieldset class="conn" id="conn-fieldset">
+              <legend style="display:none">Connection method</legend>
+
+              <label class="conn-opt">
+                <input type="radio" name="conn" value="metamask" checked />
+                <div class="conn-opt-body">
+                  <div class="conn-opt-title">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><circle cx="18" cy="14" r="1.5"/></svg>
+                    Connect MetaMask wallet
+                  </div>
+                  <div class="conn-opt-sub">Browser extension or MM Mobile</div>
+                </div>
+              </label>
+
+              <label class="conn-opt">
+                <input type="radio" name="conn" value="pk" />
+                <div class="conn-opt-body">
+                  <div class="conn-opt-title">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+                    Paste private key
+                    <span class="warn-chip">testnet</span>
+                  </div>
+                  <div class="conn-opt-sub">Signs locally — key stays in this tab</div>
+                </div>
+              </label>
+
+              <div id="pk-row" hidden>
+                <input
+                  type="password"
+                  id="pk-input"
+                  autocomplete="off"
+                  autocapitalize="off"
+                  autocorrect="off"
+                  spellcheck="false"
+                  placeholder="0x… 64 hex chars (Base Sepolia funded)"
+                />
+                <p class="pk-help">Never sent to our server, never saved. Refresh wipes it. Do not paste a key that holds real funds.</p>
+              </div>
+            </fieldset>
+
+            <button id="pay" class="cta" disabled>
+              <span class="spinner" aria-hidden="true"></span>
+              <span id="pay-label">Connect MetaMask and pay</span>
+            </button>
+
+            <a id="wc-open" class="secondary-link" target="_blank" rel="noopener">Open in browser to pay</a>
+
+            <div class="status" id="status" aria-live="polite"></div>
+          </div>
+
+          <div class="card return-card" id="return-card">
+            <div class="return-mark">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+            </div>
+            <h2 class="return-title">Verdict delivered</h2>
+            <p class="return-sub" id="return-sub">Check your Telegram chat for the result.</p>
+            <a id="return-link" class="return-cta" href="#">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9.78 18.65l.28-4.23 7.68-6.92c.34-.31-.07-.46-.52-.19L7.74 13.3 3.64 12c-.88-.25-.89-.86.2-1.3l15.97-6.16c.73-.33 1.43.18 1.15 1.3l-2.72 12.81c-.19.91-.74 1.13-1.5.71L12.6 16.3l-1.99 1.93c-.23.23-.42.42-.83.42z"/></svg>
+              Open Telegram
+            </a>
+          </div>
+        </div>
       </div>
-    </fieldset>
 
-    <button id="pay" disabled>
-      <span id="pay-label">Connect MetaMask and pay</span>
-    </button>
-    <a id="wc-open" class="wc-link" style="display:none" target="_blank" rel="noopener">Open in wallet app</a>
-    <div class="status" id="status"></div>
+      <footer>
+        <code>x402</code> protocol · grading by Llama 3.3
+      </footer>
+    </div>
 
-    <div class="footer">x402 protocol &middot; grading by Llama 3.3</div>
-
-    <script type="module" src="./app.js?v=19"></script>
+    <script type="module" src="./app.js?v=20"></script>
   </body>
 </html>

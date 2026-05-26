@@ -33,8 +33,13 @@ const $status = document.getElementById("status");
 const $wcOpen = document.getElementById("wc-open");
 const $pkRow = document.getElementById("pk-row");
 const $pkInput = document.getElementById("pk-input");
+const $payCard = document.querySelector(".pay-card");
+const $returnCard = document.getElementById("return-card");
+const $returnLink = document.getElementById("return-link");
+const $returnSub = document.getElementById("return-sub");
 
 let payload = null;
+let botUsername = "";
 
 window.addEventListener("error", (e) => {
   setStatus("Script error: " + (e.message || String(e.error || "unknown")), "err");
@@ -62,10 +67,14 @@ async function loadSession() {
       return;
     }
     payload = await res.json();
+    botUsername = payload.bot_username || "";
     $task.textContent = payload.requirements?.title ?? "(untitled)";
     const words = String(payload.submission ?? "").split(/\s+/).filter(Boolean).length;
-    const type = payload.task_type ? `${payload.task_type} · ` : "";
-    $subMeta.textContent = `${type}${words.toLocaleString()} word${words === 1 ? "" : "s"}`;
+    const typeLabel = payload.task_type ? payload.task_type.replace(/^./, (c) => c.toUpperCase()) : "Submission";
+    $subMeta.innerHTML =
+      `<strong>${escapeHtml(typeLabel)}</strong>` +
+      `<span class="sep">·</span>` +
+      `<span>${words.toLocaleString()} word${words === 1 ? "" : "s"}</span>`;
     $pay.disabled = false;
     setStatus("");
   } catch (err) {
@@ -306,11 +315,7 @@ async function payAndGrade() {
     if (!deliverRes.ok) {
       throw new Error("Couldn't deliver verdict to chat: API " + deliverRes.status);
     }
-    if (tg) {
-      tg.close();
-    } else {
-      setStatus(JSON.stringify(verdict, null, 2), "ok");
-    }
+    showReturnToTelegram();
   } catch (err) {
     const msg = err?.shortMessage || err?.message || String(err);
     setStatus("Error: " + msg, "err");
@@ -322,6 +327,34 @@ async function payAndGrade() {
 
 function short(addr) {
   return addr.length > 12 ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : addr;
+}
+
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+// After a successful grade + verdict POST: swap the payment surface for a
+// success card and try to auto-close the WebView. tg.close() only takes
+// effect inside Telegram; in an external browser it's a no-op so the user
+// just sees the success card with a t.me/<bot> link as the fallback.
+function showReturnToTelegram() {
+  if ($payCard) $payCard.style.display = "none";
+  const href = botUsername ? `https://t.me/${botUsername}` : "https://t.me";
+  $returnLink.href = href;
+  $returnLink.target = "_blank";
+  $returnLink.rel = "noopener";
+  $returnCard.classList.add("show");
+  if (tg && typeof tg.close === "function") {
+    // Brief delay so the success state is perceived before the WebView snaps shut.
+    setTimeout(() => {
+      try { tg.close(); } catch { /* ignore */ }
+    }, 700);
+  }
 }
 
 function setStatus(msg, kind) {

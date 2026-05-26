@@ -37,6 +37,10 @@ if (!MINIAPP_READY) {
 
 const bot = new Bot(TOKEN);
 
+// Captured from getMe() at startup so /session/:id can echo it back to the
+// Mini App, which uses it to build a t.me/<bot> return link.
+let botUsername = "";
+
 // ── State ──────────────────────────────────────────────────────────────
 
 /** sessions: id → { payload, expiresAt }  (payload = grading request) */
@@ -681,6 +685,7 @@ http.get("/session/:id", (req, res) => {
     requirements: payload.requirements,
     submission: payload.submission,
     meta: payload.meta ?? null,
+    bot_username: botUsername || null,
   });
 });
 
@@ -724,7 +729,10 @@ async function startWithRetry() {
     try {
       await bot.start({
         drop_pending_updates: true,
-        onStart: (me) => console.log(`[bot] started as @${me.username}`),
+        onStart: (me) => {
+          botUsername = me.username;
+          console.log(`[bot] started as @${me.username}`);
+        },
       });
       return;
     } catch (err) {
