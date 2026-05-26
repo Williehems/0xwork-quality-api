@@ -82,6 +82,8 @@ const $returnSub = document.getElementById("return-sub");
 const $sectionGrade = document.querySelector('[data-mode="grade"]');
 const $sectionApprove = document.querySelector('[data-mode="approve"]');
 const $sectionDispute = document.querySelector('[data-mode="dispute"]');
+// Wallet-warning disclosure — visible only in approve/dispute (on-chain tx) modes.
+const $walletNotice = document.querySelector('[data-mode="action"]');
 // Approve-specific value slots.
 const $approveBounty = document.getElementById("approve-bounty");
 const $approveFee = document.getElementById("approve-fee");
@@ -137,6 +139,7 @@ function renderGradeMode(p) {
   $sectionGrade.hidden = false;
   $sectionApprove.hidden = true;
   $sectionDispute.hidden = true;
+  if ($walletNotice) $walletNotice.hidden = true;
   $task.textContent = p.requirements?.title ?? "(untitled)";
   const words = String(p.submission ?? "").split(/\s+/).filter(Boolean).length;
   const typeLabel = p.task_type ? p.task_type.replace(/^./, (c) => c.toUpperCase()) : "Submission";
@@ -152,6 +155,7 @@ function renderActionMode(p, kind) {
   $sectionGrade.hidden = true;
   $sectionApprove.hidden = kind !== "approve";
   $sectionDispute.hidden = kind !== "dispute";
+  if ($walletNotice) $walletNotice.hidden = false;
 
   const task = p.task || {};
   $task.textContent = task.title || p.requirements?.title || `Task #${task.id ?? "?"}`;
@@ -409,7 +413,7 @@ async function signAndSendAction(kind) {
     ? await encodeApproveWork(taskId)
     : await encodeRejectWork(taskId);
 
-  setStatus(`Open ${kind === "approve" ? "MetaMask" : "wallet"} to confirm…`);
+  setStatus(`Open ${kind === "approve" ? "MetaMask" : "wallet"} to confirm. Your wallet may warn — this is expected.`);
   const { txHash } = await sendAndConfirm({
     provider,
     from: address,

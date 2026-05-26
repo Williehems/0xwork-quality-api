@@ -302,6 +302,43 @@
       .dispute-callout p { margin: 0; }
       .dispute-callout p + p { margin-top: 8px; }
       .dispute-callout .lead { color: var(--warn); font-weight: 600; }
+      .wallet-notice {
+        margin-top: 12px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--surface);
+        font-size: 12.5px;
+        line-height: 1.55;
+      }
+      .wallet-notice > summary {
+        list-style: none;
+        cursor: pointer;
+        padding: 10px 12px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--text-2);
+        user-select: none;
+      }
+      .wallet-notice > summary::-webkit-details-marker { display: none; }
+      .wallet-notice > summary .chev {
+        margin-left: auto;
+        transition: transform 150ms ease;
+        opacity: 0.6;
+      }
+      .wallet-notice[open] > summary .chev { transform: rotate(180deg); }
+      .wallet-notice .body {
+        padding: 0 12px 12px;
+        color: var(--text-2);
+      }
+      .wallet-notice .body p { margin: 0 0 8px; }
+      .wallet-notice .body p:last-child { margin-bottom: 0; }
+      .wallet-notice .body a {
+        color: var(--link);
+        text-decoration: none;
+        word-break: break-all;
+      }
+      .wallet-notice .body a:hover { text-decoration: underline; }
       .return-scan {
         display: inline-block;
         margin: -8px 0 14px;
@@ -631,6 +668,19 @@
               </div>
             </div>
 
+            <details class="wallet-notice" data-mode="action" hidden>
+              <summary>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                <span>Your wallet may show a security warning — that's expected.</span>
+                <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+              </summary>
+              <div class="body">
+                <p>Some wallets (e.g. Zerion) flag transactions to new contracts as "malicious" by default. TaskPoolV4 is the verified 0xwork bounty contract on Base.</p>
+                <p><a href="https://basescan.org/address/0xF404aFdbA46e05Af7B395FB45c43e66dB549C6D2#code" target="_blank" rel="noopener">View source on BaseScan ↗</a></p>
+                <p>It's safe to proceed.</p>
+              </div>
+            </details>
+
             <fieldset class="conn" id="conn-fieldset">
               <legend style="display:none">Connection method</legend>
 
@@ -700,6 +750,6 @@
       </footer>
     </div>
 
-    <script type="module" src="./app.js?v=23"></script>
+    <script type="module" src="./app.js?v=24"></script>
   </body>
 </html>
