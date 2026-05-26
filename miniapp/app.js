@@ -1,19 +1,27 @@
-// Telegram Mini App for 0xWork quality check.
+// Telegram Mini App for 0xWork: grading, approval, and dispute flows.
 //
-// Flow:
-//   1. Read ?session=<id> from the URL.
-//   2. GET /session/<id> to load the grading payload.
-//   3. On tap: per the chosen signing path (MetaMask injected or pasted
-//      private key) drive the x402 dance via the inline client in
-//      ./x402-client.js:
-//        a. POST /check — expect 402 with payment requirements.
-//        b. Sign EIP-3009 TransferWithAuthorization (MetaMask via the
-//           injected provider's eth_signTypedData_v4; PK via ethers
-//           locally — key never leaves the tab).
-//        c. Retry /check with the base64-JSON X-PAYMENT header.
-//   4. POST /verdict/<id> so the bot can deliver to chat.
+// The Mini App is action-aware via a `?action=` URL param:
+//   - "grade" (default):  POST /check, optionally pay 0.10 USDC via x402,
+//                         deliver the verdict to chat through /verdict/<id>.
+//   - "approve":          send TaskPool.approveWork(taskId) on Base mainnet.
+//   - "dispute":          send TaskPool.rejectWork(taskId)  on Base mainnet.
+//
+// All paths share: the connection picker (MetaMask injected vs pasted PK),
+// the TG WebView bounce (MM only — PK works in-WebView), the return-to-TG
+// success card, and the Telegram theme bridge.
 
 import { signX402Authorization } from "./x402-client.js";
+import {
+  BASE_MAINNET_CHAIN_ID_HEX,
+  BASE_RPC,
+  BASESCAN_TX_BASE,
+  TASKPOOL_ADDRESS,
+  importEthers,
+  encodeApproveWork,
+  encodeRejectWork,
+  sendAndConfirm,
+  ensureBaseMainnet,
+} from "./onchain.js";
 
 const tg = window.Telegram?.WebApp;
 tg?.ready();
@@ -21,8 +29,7 @@ tg?.expand();
 
 // Mirror Telegram's theme into CSS variables so the Mini App matches the
 // user's actual TG client (dark, light, or any custom scheme they have set)
-// instead of forcing our hardcoded dark palette. The defaults baked into
-// :root in index.html cover the case where we're not running inside TG.
+// instead of forcing our hardcoded dark palette.
 function applyTelegramTheme() {
   const tp = tg?.themeParams;
   if (!tp) return;
@@ -44,8 +51,6 @@ function applyTelegramTheme() {
     const v = tp[tgKey];
     if (v) root.setProperty(cssVar, v);
   }
-  // Surface-2 (slightly elevated above the card background) isn't a TG
-  // token, so derive it from the section bg with a subtle lift.
   if (tp.section_bg_color) {
     root.setProperty("--surface-2", `color-mix(in srgb, ${tp.section_bg_color} 88%, ${tp.text_color || "#fff"} 12%)`);
   }
@@ -53,12 +58,14 @@ function applyTelegramTheme() {
 applyTelegramTheme();
 tg?.onEvent?.("themeChanged", applyTelegramTheme);
 
+// ─── URL params + action mode ─────────────────────────────────────
 const params = new URLSearchParams(location.search);
 const sessionId = params.get("session");
-// Same-origin combined server hosts both the Mini App and bot/API.
+const action = (params.get("action") || "grade").toLowerCase();
 const apiBase = location.origin;
 const botBase = location.origin;
 
+// ─── DOM refs ─────────────────────────────────────────────────────
 const $task = document.getElementById("task");
 const $subMeta = document.getElementById("sub-meta");
 const $pay = document.getElementById("pay");
@@ -71,6 +78,17 @@ const $payCard = document.querySelector(".pay-card");
 const $returnCard = document.getElementById("return-card");
 const $returnLink = document.getElementById("return-link");
 const $returnSub = document.getElementById("return-sub");
+// Action-aware pay-card sections (one is shown, the others hidden).
+const $sectionGrade = document.querySelector('[data-mode="grade"]');
+const $sectionApprove = document.querySelector('[data-mode="approve"]');
+const $sectionDispute = document.querySelector('[data-mode="dispute"]');
+// Approve-specific value slots.
+const $approveBounty = document.getElementById("approve-bounty");
+const $approveFee = document.getElementById("approve-fee");
+const $approvePayout = document.getElementById("approve-payout");
+const $approveWorker = document.getElementById("approve-worker");
+const $approveHeading = document.getElementById("approve-heading");
+const $disputeHeading = document.getElementById("dispute-heading");
 
 let payload = null;
 let botUsername = "";
@@ -83,12 +101,13 @@ window.addEventListener("unhandledrejection", (e) => {
   setStatus("Error: " + msg, "err");
 });
 
+// ─── Session load + initial render ────────────────────────────────
 async function loadSession() {
   if (!sessionId) {
     fail("Missing session parameter. Open this from the Telegram bot.");
     return;
   }
-  setStatus("Loading submission…");
+  setStatus("Loading…");
   const url = `${botBase}/session/${encodeURIComponent(sessionId)}`;
   try {
     const res = await fetch(url, { cache: "no-store" });
@@ -102,27 +121,65 @@ async function loadSession() {
     }
     payload = await res.json();
     botUsername = payload.bot_username || "";
-    $task.textContent = payload.requirements?.title ?? "(untitled)";
-    const words = String(payload.submission ?? "").split(/\s+/).filter(Boolean).length;
-    const typeLabel = payload.task_type ? payload.task_type.replace(/^./, (c) => c.toUpperCase()) : "Submission";
-    $subMeta.innerHTML =
-      `<strong>${escapeHtml(typeLabel)}</strong>` +
-      `<span class="sep">·</span>` +
-      `<span>${words.toLocaleString()} word${words === 1 ? "" : "s"}</span>`;
+    if (action === "approve" || action === "dispute") {
+      renderActionMode(payload, action);
+    } else {
+      renderGradeMode(payload);
+    }
     $pay.disabled = false;
     setStatus("");
   } catch (err) {
-    fail(`Couldn't load submission from ${url}: ${err?.message ?? String(err)}`);
+    fail(`Couldn't load session from ${url}: ${err?.message ?? String(err)}`);
   }
 }
 
-// === Signing paths ===
+function renderGradeMode(p) {
+  $sectionGrade.hidden = false;
+  $sectionApprove.hidden = true;
+  $sectionDispute.hidden = true;
+  $task.textContent = p.requirements?.title ?? "(untitled)";
+  const words = String(p.submission ?? "").split(/\s+/).filter(Boolean).length;
+  const typeLabel = p.task_type ? p.task_type.replace(/^./, (c) => c.toUpperCase()) : "Submission";
+  $subMeta.innerHTML =
+    `<strong>${escapeHtml(typeLabel)}</strong>` +
+    `<span class="sep">·</span>` +
+    `<span>${words.toLocaleString()} word${words === 1 ? "" : "s"}</span>`;
+  $payLabel.textContent = labelForMethod(getSelectedConnectionMethod());
+}
 
-const BASE_SEPOLIA_CHAIN_ID_HEX = "0x14a34"; // 84532
+function renderActionMode(p, kind) {
+  // Hide the grading sections, reveal the action-specific one.
+  $sectionGrade.hidden = true;
+  $sectionApprove.hidden = kind !== "approve";
+  $sectionDispute.hidden = kind !== "dispute";
 
-// When multiple wallet extensions inject, the browser exposes a list at
-// window.ethereum.providers. Prefer MetaMask when present so the chain
-// switch and the signTypedData call route to the same wallet.
+  const task = p.task || {};
+  $task.textContent = task.title || p.requirements?.title || `Task #${task.id ?? "?"}`;
+  const bountyN = Number(task.bountyAmount ?? task.bounty ?? 0);
+  $subMeta.innerHTML =
+    `<strong>Task #${escapeHtml(String(task.id ?? "?"))}</strong>` +
+    `<span class="sep">·</span>` +
+    `<span>${formatUSDC(bountyN)} USDC bounty</span>`;
+
+  if (kind === "approve") {
+    // Fee structure per @0xwork/sdk: 5% standard, 2% with discountedFee flag.
+    const feeRate = task.discountedFee ? 0.02 : 0.05;
+    const fee = bountyN * feeRate;
+    const payout = bountyN - fee;
+    $approveHeading.textContent = `Approve task #${task.id ?? "?"}`;
+    $approveBounty.textContent = `${formatUSDC(bountyN)} USDC`;
+    $approveFee.textContent = `${formatUSDC(fee)} USDC (${Math.round(feeRate * 100)}%)`;
+    $approvePayout.textContent = `${formatUSDC(payout)} USDC`;
+    $approveWorker.textContent = task.worker ? short(task.worker) : "—";
+    if (task.worker) $approveWorker.setAttribute("title", task.worker);
+  } else {
+    $disputeHeading.textContent = `Dispute task #${task.id ?? "?"}`;
+  }
+
+  $payLabel.textContent = labelForMethod(getSelectedConnectionMethod());
+}
+
+// ─── Wallet connection paths (shared between grade + action flows) ─
 function getInjectedProvider() {
   const eth = window.ethereum;
   if (!eth) return null;
@@ -134,37 +191,8 @@ function getInjectedProvider() {
 }
 
 function openInMetaMaskAppBrowser() {
-  // metamask.app.link/dapp/<host+path> opens the page inside MetaMask
-  // Mobile's in-app browser, which auto-injects window.ethereum.
   const stripped = window.location.href.replace(/^https?:\/\//, "");
   window.location.href = `https://metamask.app.link/dapp/${stripped}`;
-}
-
-async function ensureBaseSepolia(provider) {
-  const current = await provider.request({ method: "eth_chainId" });
-  if (typeof current === "string" && current.toLowerCase() === BASE_SEPOLIA_CHAIN_ID_HEX) return;
-  try {
-    await provider.request({
-      method: "wallet_switchEthereumChain",
-      params: [{ chainId: BASE_SEPOLIA_CHAIN_ID_HEX }],
-    });
-  } catch (err) {
-    // 4902 = unrecognized chain; some wallets surface it via -32603.
-    if (err && (err.code === 4902 || err.code === -32603)) {
-      await provider.request({
-        method: "wallet_addEthereumChain",
-        params: [{
-          chainId: BASE_SEPOLIA_CHAIN_ID_HEX,
-          chainName: "Base Sepolia",
-          nativeCurrency: { name: "Sepolia ETH", symbol: "ETH", decimals: 18 },
-          rpcUrls: ["https://sepolia.base.org"],
-          blockExplorerUrls: ["https://sepolia.basescan.org"],
-        }],
-      });
-    } else {
-      throw err;
-    }
-  }
 }
 
 async function connectMetaMask() {
@@ -176,38 +204,42 @@ async function connectMetaMask() {
   }
   const accounts = await injected.request({ method: "eth_requestAccounts" });
   if (!accounts?.length) throw new Error("MetaMask returned no account");
-  await ensureBaseSepolia(injected);
+  await ensureBaseMainnet(injected);
   return { provider: injected, address: accounts[0] };
 }
 
 // Private-key path. Key stays in browser memory only — never POSTed, never
-// persisted. ethers.Wallet.signTypedData covers our EIP-712 case directly.
-let ethersModPromise = null;
-function importEthers() {
-  if (!ethersModPromise) {
-    ethersModPromise = import("https://cdn.jsdelivr.net/npm/ethers@6.13.4/+esm");
-  }
-  return ethersModPromise;
-}
-
+// persisted. ethers.Wallet handles both typed-data signing (for x402
+// grading payments) and full transactions (for approve/dispute).
 async function connectWithPrivateKey(rawKey) {
   const key = rawKey.trim().startsWith("0x") ? rawKey.trim() : "0x" + rawKey.trim();
   if (!/^0x[0-9a-fA-F]{64}$/.test(key)) {
     throw new Error("Invalid private key — expected 64 hex chars (optionally 0x-prefixed)");
   }
   const ethers = await importEthers();
-  const wallet = new ethers.Wallet(key);
-  // Minimal EIP-1193-ish shim so x402-client.js can sign through .request()
-  // the same way it does for the MetaMask path.
+  // Connect to Base mainnet RPC so wallet.sendTransaction can fetch
+  // nonce / gas / submit. The same wallet handles typed-data signing
+  // (no RPC needed for that, but the connection is harmless).
+  const rpcProvider = new ethers.JsonRpcProvider(BASE_RPC);
+  const wallet = new ethers.Wallet(key, rpcProvider);
   const provider = {
     request: async ({ method, params }) => {
-      if (method === "eth_chainId") return BASE_SEPOLIA_CHAIN_ID_HEX;
+      if (method === "eth_chainId") return BASE_MAINNET_CHAIN_ID_HEX;
       if (method === "eth_accounts" || method === "eth_requestAccounts") return [wallet.address];
       if (method === "eth_signTypedData_v4") {
         const typed = typeof params[1] === "string" ? JSON.parse(params[1]) : params[1];
         const types = { ...typed.types };
         delete types.EIP712Domain;
         return wallet.signTypedData(typed.domain, types, typed.message);
+      }
+      if (method === "eth_sendTransaction") {
+        const tx = params?.[0] ?? {};
+        const sent = await wallet.sendTransaction({
+          to: tx.to,
+          data: tx.data,
+          value: tx.value ? BigInt(tx.value) : 0n,
+        });
+        return sent.hash;
       }
       throw new Error(`PK provider does not implement ${method}`);
     },
@@ -219,34 +251,44 @@ function getSelectedConnectionMethod() {
   return document.querySelector('input[name="conn"]:checked')?.value || "metamask";
 }
 
-// === Telegram WebView bounce ===
+async function getConnection() {
+  const method = getSelectedConnectionMethod();
+  // MetaMask can't sign inside TG's WebView (no window.ethereum, deeplink
+  // would drop the user out of TG). Bounce to external browser. The PK
+  // path signs locally with ethers, so it works fine in-WebView.
+  if (method === "metamask" && isInTelegramWebView()) {
+    showOpenInBrowserPrompt();
+    return null;
+  }
+  if (method === "pk") {
+    const pk = $pkInput.value;
+    if (!pk) {
+      setStatus("Paste a private key first.", "err");
+      $pay.disabled = false;
+      setBtnBusy(false);
+      return null;
+    }
+    setStatus("Loading signer…");
+    const conn = await connectWithPrivateKey(pk);
+    $pkInput.value = ""; // wipe immediately so it can't be re-read
+    return conn;
+  }
+  setStatus("Connecting MetaMask…");
+  return await connectMetaMask();
+}
 
-// initData is non-empty when launched from inside Telegram. In external
-// browsers telegram-web-app.js still loads (so `tg` exists), but initData
-// is normally empty. Caveat: after a `tg.openLink` bounce the URL hash
-// may still carry tgWebAppData=, and telegram-web-app.js re-parses that
-// in the external browser too — which would make this falsely return
-// true. Honor an explicit ?fromTgBounce=1 sentinel to short-circuit.
+// ─── Telegram WebView bounce ──────────────────────────────────────
 function isInTelegramWebView() {
   if (params.get("fromTgBounce") === "1") return false;
   return !!(tg?.initData);
 }
 
-// Wallet pairing reliably fails inside Telegram's WebView (relay hangs
-// for WC; MetaMask's deeplink can't escape the in-app browser either).
-// Send the user to the same Mini App URL in their real browser, where
-// both paths work. The session ID stays in the URL so loadSession() picks
-// up where this one left off, and the verdict POST still notifies the bot
-// so the user gets the result in chat.
 function showOpenInBrowserPrompt() {
-  // Strip the `#tgWebAppData=...` hash so the external browser doesn't
-  // re-init as a TG WebApp, and add ?fromTgBounce=1 so our detector
-  // short-circuits even if some hash slips through.
   const url = new URL(window.location.href);
   url.hash = "";
   url.searchParams.set("fromTgBounce", "1");
   const cleanUrl = url.toString();
-  $wcOpen.textContent = "Open in browser to pay";
+  $wcOpen.textContent = "Open in browser to continue";
   $wcOpen.href = cleanUrl;
   $wcOpen.style.display = "block";
   $wcOpen.onclick = (e) => {
@@ -256,100 +298,23 @@ function showOpenInBrowserPrompt() {
     }
   };
   setStatus(
-    "Wallet pairing doesn't work inside Telegram. Tap to continue in your browser — the verdict will still be sent to this chat.",
+    "MetaMask can't connect inside Telegram. Tap to continue in your browser — the result will still be sent to this chat.",
   );
   $pay.disabled = true;
   setBtnBusy(false);
 }
 
-async function payAndGrade() {
+// ─── Action dispatch ──────────────────────────────────────────────
+async function onPrimaryClick() {
   if (!payload) return;
   $pay.disabled = true;
   setBtnBusy(true);
   try {
-    const body = JSON.stringify({
-      task_type: payload.task_type,
-      tier: payload.tier,
-      requirements: payload.requirements,
-      submission: payload.submission,
-    });
-    const headers = { "content-type": "application/json" };
-
-    // Try /check first without payment. If the server's running in bypass
-    // mode (or otherwise doesn't require payment for this caller) it
-    // returns 200 immediately and we skip the whole signing dance.
-    setStatus("Submitting for grading…");
-    let res = await fetch(`${apiBase}/check`, { method: "POST", headers, body });
-
-    if (res.status === 402) {
-      const method = getSelectedConnectionMethod();
-
-      // MetaMask can't sign inside TG's WebView (no window.ethereum, and
-      // a deeplink would dump the user into MM Mobile -- losing the TG
-      // chat context). Bounce to the user's real browser for that path.
-      // The PK path signs locally with ethers, so it works fine in-place.
-      if (method === "metamask" && isInTelegramWebView()) {
-        showOpenInBrowserPrompt();
-        return;
-      }
-
-      let conn;
-      if (method === "pk") {
-        const pk = $pkInput.value;
-        if (!pk) {
-          setStatus("Paste a private key first.", "err");
-          $pay.disabled = false;
-          setBtnBusy(false);
-          return;
-        }
-        setStatus("Loading signer…");
-        conn = await connectWithPrivateKey(pk);
-        $pkInput.value = ""; // wipe immediately so it can't be re-read
-      } else {
-        setStatus("Connecting MetaMask…");
-        conn = await connectMetaMask();
-        if (!conn) return; // deeplink redirect in flight
-      }
-
-      const { provider, address } = conn;
-
-      setStatus(`Signer ready (${short(address)}). Signing payment…`);
-      const offer = await res.json();
-      const accepts = offer?.accepts;
-      if (!Array.isArray(accepts) || accepts.length === 0) {
-        throw new Error("API offered no payment options.");
-      }
-      const reqSpec = accepts.find((a) => a.scheme === "exact") ?? accepts[0];
-
-      const xPayment = await signX402Authorization(
-        provider, address, offer.x402Version ?? 1, reqSpec,
-      );
-
-      setStatus("Submitting payment…");
-      res = await fetch(`${apiBase}/check`, {
-        method: "POST",
-        headers: { ...headers, "X-PAYMENT": xPayment },
-        body,
-      });
+    if (action === "approve" || action === "dispute") {
+      await signAndSendAction(action);
+    } else {
+      await payAndGrade();
     }
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(`API ${res.status}${text ? `: ${text.slice(0, 200)}` : ""}`);
-    }
-
-    const verdict = await res.json();
-    setStatus("Graded. Returning verdict to chat…", "ok");
-
-    const deliverRes = await fetch(`${apiBase}/verdict/${encodeURIComponent(sessionId)}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(verdict),
-    });
-    if (!deliverRes.ok) {
-      throw new Error("Couldn't deliver verdict to chat: API " + deliverRes.status);
-    }
-    showReturnToTelegram();
   } catch (err) {
     const msg = err?.shortMessage || err?.message || String(err);
     setStatus("Error: " + msg, "err");
@@ -359,8 +324,125 @@ async function payAndGrade() {
   }
 }
 
+// ─── Grade flow (existing pay+grade dance) ────────────────────────
+async function payAndGrade() {
+  const body = JSON.stringify({
+    task_type: payload.task_type,
+    tier: payload.tier,
+    requirements: payload.requirements,
+    submission: payload.submission,
+  });
+  const headers = { "content-type": "application/json" };
+
+  setStatus("Submitting for grading…");
+  let res = await fetch(`${apiBase}/check`, { method: "POST", headers, body });
+
+  if (res.status === 402) {
+    const conn = await getConnection();
+    if (!conn) return;
+    const { provider, address } = conn;
+    setStatus(`Signer ready (${short(address)}). Signing payment…`);
+
+    const offer = await res.json();
+    const accepts = offer?.accepts;
+    if (!Array.isArray(accepts) || accepts.length === 0) {
+      throw new Error("API offered no payment options.");
+    }
+    const reqSpec = accepts.find((a) => a.scheme === "exact") ?? accepts[0];
+
+    const xPayment = await signX402Authorization(
+      provider, address, offer.x402Version ?? 1, reqSpec,
+    );
+
+    setStatus("Submitting payment…");
+    res = await fetch(`${apiBase}/check`, {
+      method: "POST",
+      headers: { ...headers, "X-PAYMENT": xPayment },
+      body,
+    });
+  }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`API ${res.status}${text ? `: ${text.slice(0, 200)}` : ""}`);
+  }
+
+  const verdict = await res.json();
+  setStatus("Graded. Returning verdict to chat…", "ok");
+
+  const deliverRes = await fetch(`${apiBase}/verdict/${encodeURIComponent(sessionId)}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(verdict),
+  });
+  if (!deliverRes.ok) {
+    throw new Error("Couldn't deliver verdict to chat: API " + deliverRes.status);
+  }
+  showReturnToTelegram("Verdict delivered", "Check your Telegram chat for the result.");
+}
+
+// ─── Approve / dispute flow ───────────────────────────────────────
+async function signAndSendAction(kind) {
+  const task = payload?.task;
+  if (task?.id == null) throw new Error("Session has no task data.");
+  const taskId = task.id;
+
+  const conn = await getConnection();
+  if (!conn) return;
+  const { provider, address } = conn;
+
+  // Sanity check: only the poster can approve/reject on-chain. The bot
+  // shouldn't have launched this flow if the wallet isn't the poster, but
+  // surface a clear error if it happens (e.g. user picked a different
+  // wallet than the one bound via /wallet).
+  if (task.posterAddress && address.toLowerCase() !== String(task.posterAddress).toLowerCase()) {
+    throw new Error(
+      `Wallet ${short(address)} isn't the poster of task #${taskId} ` +
+      `(poster: ${short(task.posterAddress)}). Switch wallets or rebind via /wallet.`
+    );
+  }
+
+  await ensureBaseMainnet(provider);
+
+  setStatus(`Encoding ${kind === "approve" ? "approval" : "dispute"} call…`);
+  const data = kind === "approve"
+    ? await encodeApproveWork(taskId)
+    : await encodeRejectWork(taskId);
+
+  setStatus(`Open ${kind === "approve" ? "MetaMask" : "wallet"} to confirm…`);
+  const { txHash } = await sendAndConfirm({
+    provider,
+    from: address,
+    to: TASKPOOL_ADDRESS,
+    data,
+  });
+
+  setStatus("Notifying chat…", "ok");
+  const resultBody = { action: kind, taskId, txHash };
+  const r = await fetch(`${apiBase}/action-result/${encodeURIComponent(sessionId)}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(resultBody),
+  });
+  if (!r.ok) {
+    // The tx already landed — telling the user the chat notification
+    // failed is more honest than hiding it.
+    const t = await r.text().catch(() => "");
+    throw new Error(`Tx confirmed (${BASESCAN_TX_BASE}${txHash}) but chat notify failed: ${r.status}${t ? ` ${t.slice(0, 120)}` : ""}`);
+  }
+
+  const headline = kind === "approve" ? "Approved" : "Dispute opened";
+  const sub = kind === "approve"
+    ? "Bounty released to the worker on-chain. Check your Telegram chat for the BaseScan link."
+    : "48h dispute window started. Check your Telegram chat for details.";
+  showReturnToTelegram(headline, sub, { txHash });
+}
+
+// ─── Utility ──────────────────────────────────────────────────────
 function short(addr) {
-  return addr.length > 12 ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : addr;
+  if (!addr) return "—";
+  const s = String(addr);
+  return s.length > 12 ? `${s.slice(0, 6)}…${s.slice(-4)}` : s;
 }
 
 function escapeHtml(s) {
@@ -372,22 +454,40 @@ function escapeHtml(s) {
     .replace(/'/g, "&#39;");
 }
 
-// After a successful grade + verdict POST: swap the payment surface for a
-// success card and try to auto-close the WebView. tg.close() only takes
-// effect inside Telegram; in an external browser it's a no-op so the user
-// just sees the success card with a t.me/<bot> link as the fallback.
-function showReturnToTelegram() {
+function formatUSDC(n) {
+  if (!Number.isFinite(Number(n))) return "—";
+  return Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+}
+
+// Swap the action surface for a success card. tg.close() runs after a
+// brief beat (TG WebView closes; external browser stays put and shows
+// the success card with a t.me/<bot> fallback).
+function showReturnToTelegram(headline, sub, extras = {}) {
   if ($payCard) $payCard.style.display = "none";
   const href = botUsername ? `https://t.me/${botUsername}` : "https://t.me";
   $returnLink.href = href;
   $returnLink.target = "_blank";
   $returnLink.rel = "noopener";
+  if (headline) {
+    const h = document.querySelector("#return-card .return-title");
+    if (h) h.textContent = headline;
+  }
+  if (sub) $returnSub.textContent = sub;
+  // Optional BaseScan link below the sub copy.
+  if (extras.txHash) {
+    const existing = document.getElementById("return-scan");
+    const scan = existing || document.createElement("a");
+    scan.id = "return-scan";
+    scan.href = `${BASESCAN_TX_BASE}${extras.txHash}`;
+    scan.target = "_blank";
+    scan.rel = "noopener";
+    scan.textContent = "View tx on BaseScan";
+    scan.className = "return-scan";
+    if (!existing) $returnSub.insertAdjacentElement("afterend", scan);
+  }
   $returnCard.classList.add("show");
   if (tg && typeof tg.close === "function") {
-    // Brief delay so the success state is perceived before the WebView snaps shut.
-    setTimeout(() => {
-      try { tg.close(); } catch { /* ignore */ }
-    }, 700);
+    setTimeout(() => { try { tg.close(); } catch { /* ignore */ } }, 700);
   }
 }
 
@@ -397,7 +497,11 @@ function setStatus(msg, kind) {
 }
 
 function labelForMethod(m) {
-  return m === "pk" ? "Sign with key and pay" : "Connect MetaMask and pay";
+  const verb = action === "approve" ? "approve"
+             : action === "dispute" ? "dispute"
+             : "pay";
+  if (m === "pk") return `Sign with key and ${verb}`;
+  return `Connect MetaMask and ${verb}`;
 }
 
 function setBtnBusy(busy) {
@@ -417,7 +521,7 @@ function fail(msg) {
   if ($subMeta.textContent === "Loading…") $subMeta.textContent = "—";
 }
 
-// Wire connection-method toggle: show/hide PK input, update button label.
+// Wire connection-method toggle.
 document.querySelectorAll('input[name="conn"]').forEach((r) => {
   r.addEventListener("change", () => {
     const m = getSelectedConnectionMethod();
@@ -427,5 +531,5 @@ document.querySelectorAll('input[name="conn"]').forEach((r) => {
   });
 });
 
-$pay.addEventListener("click", payAndGrade);
+$pay.addEventListener("click", onPrimaryClick);
 loadSession();

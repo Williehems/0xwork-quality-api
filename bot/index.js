@@ -685,6 +685,7 @@ http.get("/session/:id", (req, res) => {
     requirements: payload.requirements,
     submission: payload.submission,
     meta: payload.meta ?? null,
+    task: payload.task ?? null,
     bot_username: botUsername || null,
   });
 });
@@ -694,14 +695,39 @@ http.get("/session/:id", (req, res) => {
 http.use(express.json({ limit: "32kb" }));
 http.post("/verdict/:sessionId", async (req, res) => {
   try {
-    const payload = getSession(req.params.sessionId);
+    const sessionId = req.params.sessionId;
+    const payload = getSession(sessionId);
     if (!payload) return res.status(404).json({ error: "session_not_found" });
     const userId = payload.userId;
     if (!userId) return res.status(400).json({ error: "session_has_no_user" });
     const verdict = req.body;
-    await bot.api.sendMessage(userId, renderVerdict(verdict, {}), {
+
+    // Build the `task` object the action flow needs. We re-fetch the task
+    // from 0xwork so discountedFee reflects current on-chain state, but
+    // fall back to the meta we already have if the API hiccups — the Mini
+    // App can still operate with bountyAmount + worker and just shows the
+    // 5% fee assumption.
+    let freshTask = null;
+    if (payload.meta?.task_id != null) {
+      freshTask = await getTaskById(payload.meta.task_id).catch((err) => {
+        console.warn("[bot] /verdict: getTaskById failed, using session meta:", err.message);
+        return null;
+      });
+    }
+    const poster = await getWallet(userId).catch(() => null);
+    const task = {
+      id: payload.meta?.task_id,
+      title: freshTask?.title ?? payload.requirements?.title ?? null,
+      bountyAmount: freshTask?.bounty ?? payload.meta?.bounty ?? 0,
+      worker: freshTask?.workerAddress ?? payload.meta?.worker_address ?? null,
+      posterAddress: poster?.wallet ?? freshTask?.posterAddress ?? null,
+      discountedFee: freshTask?.discountedFee ?? false,
+    };
+    updateSession(sessionId, { task });
+
+    await bot.api.sendMessage(userId, renderVerdict(verdict, payload.meta), {
       parse_mode: "HTML",
-      reply_markup: postVerdictKeyboard(),
+      reply_markup: postVerdictKeyboard(sessionId),
     });
     res.json({ ok: true });
   } catch (err) {
@@ -709,6 +735,65 @@ http.post("/verdict/:sessionId", async (req, res) => {
     res.status(500).json({ error: "send_failed", message: err.message });
   }
 });
+
+// Mini App POSTs here after a confirmed approve/reject on-chain tx. We
+// notify the user's chat with a BaseScan link and clear the session.
+http.post("/action-result/:sessionId", async (req, res) => {
+  try {
+    const sessionId = req.params.sessionId;
+    const payload = getSession(sessionId);
+    if (!payload) return res.status(404).json({ error: "session_not_found" });
+    const userId = payload.userId;
+    if (!userId) return res.status(400).json({ error: "session_has_no_user" });
+
+    const { action, taskId, txHash } = req.body ?? {};
+    if (action !== "approve" && action !== "dispute") {
+      return res.status(400).json({ error: "bad_action" });
+    }
+    if (!txHash || typeof txHash !== "string") {
+      return res.status(400).json({ error: "missing_tx_hash" });
+    }
+
+    const message = renderActionResult({ action, taskId, txHash, payload });
+    const kb = new InlineKeyboard()
+      .url("🔍 View on BaseScan", `https://basescan.org/tx/${txHash}`)
+      .row()
+      .text("📥 Inbox", "go:inbox")
+      .text("🏠 Home", "go:home");
+    await bot.api.sendMessage(userId, message, {
+      parse_mode: "HTML",
+      reply_markup: kb,
+      link_preview_options: { is_disabled: true },
+    });
+    // Action terminal — wipe the session so the same Approve button can't
+    // be tapped twice. (User can /inbox again if they need to redo.)
+    sessions.delete(sessionId);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("[bot] /action-result send failed:", err);
+    res.status(500).json({ error: "send_failed", message: err.message });
+  }
+});
+
+function renderActionResult({ action, taskId, txHash, payload }) {
+  const id = taskId ?? payload?.meta?.task_id ?? "?";
+  const shortHash = `${String(txHash).slice(0, 10)}…${String(txHash).slice(-6)}`;
+  if (action === "approve") {
+    return (
+      `✅ <b>Approved task #${esc(String(id))}</b>\n\n` +
+      `Bounty released to the worker on-chain.\n` +
+      `Tx: <code>${esc(shortHash)}</code>`
+    );
+  }
+  // dispute
+  return (
+    `⚠️ <b>Dispute opened on task #${esc(String(id))}</b>\n\n` +
+    `48-hour dispute window started. If no resolution is reached, the worker ` +
+    `is paid automatically. Escalate via <a href="https://0xwork.org/tasks/${esc(String(id))}">0xwork.org</a> ` +
+    `before the window closes if you want to deny payment.\n\n` +
+    `Tx: <code>${esc(shortHash)}</code>`
+  );
+}
 
 // Mount the API (/healthz, /check) on the same server.
 http.use(createApiApp());
@@ -809,8 +894,18 @@ function recoveryKeyboard(sessionId, hasSummary, taskId) {
   return kb;
 }
 
-function postVerdictKeyboard() {
-  return new InlineKeyboard().text("📥 Inbox", "go:inbox").text("🏠 Home", "go:home");
+function postVerdictKeyboard(sessionId) {
+  const kb = new InlineKeyboard();
+  // Only attach approve/dispute when the Mini App is available; otherwise
+  // the buttons would dead-end (no UI to sign the on-chain tx).
+  if (MINIAPP_READY && sessionId) {
+    const base = `${MINIAPP_URL}?session=${encodeURIComponent(sessionId)}&_v=${encodeURIComponent(BUILD_TOKEN)}`;
+    kb.webApp("✅ Approve", `${base}&action=approve`)
+      .webApp("⚠️ Dispute", `${base}&action=dispute`)
+      .row();
+  }
+  kb.text("📥 Inbox", "go:inbox").text("🏠 Home", "go:home");
+  return kb;
 }
 
 function renderRubricConfirm(task, rubric, wordCount, format, pages) {

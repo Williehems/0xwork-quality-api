@@ -235,6 +235,7 @@ function normalizeTask(t) {
     bounty: Number.parseFloat(t.bounty ?? t.bounty_amount ?? 0) || 0,
     posterAddress: t.poster_address ?? t.poster ?? null,
     workerAddress: t.worker_address ?? t.worker ?? null,
+    discountedFee: Boolean(t.discounted_fee ?? t.discountedFee ?? false),
     state: t.state ?? t.status ?? null,
     proofUrl: t.delivery_link ?? t.proof_hash ?? t.proof ?? t.proof_url ?? t.proofHash ?? null,
     deliveryDescription: t.delivery_description ?? null,

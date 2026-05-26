@@ -28,7 +28,7 @@ services:
       - key: X402_PAY_TO
         sync: false
       - key: X402_NETWORK
-        value: base-sepolia
+        value: base
       - key: X402_FACILITATOR_URL
         value: https://facilitator.xpay.sh
       - key: X402_BYPASS
