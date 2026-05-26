@@ -19,6 +19,40 @@ const tg = window.Telegram?.WebApp;
 tg?.ready();
 tg?.expand();
 
+// Mirror Telegram's theme into CSS variables so the Mini App matches the
+// user's actual TG client (dark, light, or any custom scheme they have set)
+// instead of forcing our hardcoded dark palette. The defaults baked into
+// :root in index.html cover the case where we're not running inside TG.
+function applyTelegramTheme() {
+  const tp = tg?.themeParams;
+  if (!tp) return;
+  const map = {
+    bg_color: "--bg",
+    secondary_bg_color: "--bg-elev",
+    section_bg_color: "--surface",
+    text_color: "--text",
+    subtitle_text_color: "--text-2",
+    hint_color: "--text-3",
+    section_separator_color: "--border",
+    button_color: "--accent",
+    button_text_color: "--accent-text",
+    link_color: "--link",
+    destructive_text_color: "--err",
+  };
+  const root = document.documentElement.style;
+  for (const [tgKey, cssVar] of Object.entries(map)) {
+    const v = tp[tgKey];
+    if (v) root.setProperty(cssVar, v);
+  }
+  // Surface-2 (slightly elevated above the card background) isn't a TG
+  // token, so derive it from the section bg with a subtle lift.
+  if (tp.section_bg_color) {
+    root.setProperty("--surface-2", `color-mix(in srgb, ${tp.section_bg_color} 88%, ${tp.text_color || "#fff"} 12%)`);
+  }
+}
+applyTelegramTheme();
+tg?.onEvent?.("themeChanged", applyTelegramTheme);
+
 const params = new URLSearchParams(location.search);
 const sessionId = params.get("session");
 // Same-origin combined server hosts both the Mini App and bot/API.
