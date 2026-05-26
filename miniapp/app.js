@@ -112,18 +112,42 @@ async function ensureWalletConnected(EthereumProvider) {
     );
   }
 
-  // Stopwatch — proves setTimeout/setInterval fire even if WC's init
-  // is hanging on a blocked storage call. If this counter freezes, the
-  // main thread is blocked; if it keeps counting past 30 with no error,
-  // our Promise.race has a bug.
-  let elapsed = 0;
-  setStatus(`Connecting to relay (0s, projectId ${maskId(wcProjectId)})…`);
-  const ticker = setInterval(() => {
-    elapsed++;
-    setStatus(`Connecting to relay (${elapsed}s, projectId ${maskId(wcProjectId)})…`);
-  }, 1000);
+  // Phase-tracked init. Each "phase" is a step we want to attribute a
+  // freeze/error to. The ticker shows phase + elapsed time so the user
+  // can tell us which step is stuck. Ticks fast (100ms) for the first
+  // ~2s to distinguish "frozen main thread" from "we just haven't ticked
+  // yet" — setInterval(1000ms) fires its first callback at 1000ms, which
+  // can look indistinguishable from a sync block.
+  let phase = "starting";
+  let phaseStart = performance.now();
+  const setPhase = (p) => { phase = p; phaseStart = performance.now(); };
+  const fmtElapsed = () => {
+    const ms = performance.now() - phaseStart;
+    return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
+  };
+  setStatus(`[${phase} 0ms] projectId ${maskId(wcProjectId)}`);
+  let tickN = 0;
+  let fastTicker = null;
+  let slowTicker = null;
+  const stopTickers = () => {
+    if (fastTicker) clearInterval(fastTicker);
+    if (slowTicker) clearInterval(slowTicker);
+  };
+  const tickMsg = () => `[${phase} ${fmtElapsed()}] tick #${tickN}, projectId ${maskId(wcProjectId)}`;
+  fastTicker = setInterval(() => {
+    tickN++;
+    setStatus(tickMsg());
+    // After 20 fast ticks (~2s), drop to 1s interval to reduce noise.
+    if (tickN === 20) {
+      clearInterval(fastTicker);
+      fastTicker = null;
+      slowTicker = setInterval(() => { tickN++; setStatus(tickMsg()); }, 1000);
+    }
+  }, 100);
 
   try {
+    setPhase("init-call");
+    console.log("[wc] phase:init-call");
     const initPromise = EthereumProvider.init({
       projectId: wcProjectId,
       optionalChains: [84532], // Base Sepolia (optional so wallets without it can still pair)
@@ -138,21 +162,26 @@ async function ensureWalletConnected(EthereumProvider) {
     });
     const timeout = new Promise((_, rej) =>
       setTimeout(() => rej(new Error(
-        `Reown relay didn't respond in 30s (elapsed=${elapsed}s). ` +
-        `Likely causes: ${location.origin} not in the Reown allowed-origins list, ` +
-        `WebSocket blocked by the network/WebView, or a relay outage.`
+        `Reown relay didn't respond in 30s (phase=${phase}, ticks=${tickN}). ` +
+        `Origin ${location.origin}. ` +
+        `Likely causes: origin not in Reown allowed-origins list, ` +
+        `WebSocket blocked by network/WebView, or relay outage.`
       )), 30000),
     );
     wcProvider = await Promise.race([initPromise, timeout]);
+    setPhase("init-resolved");
+    console.log("[wc] phase:init-resolved");
   } catch (e) {
-    clearInterval(ticker);
+    stopTickers();
     const m = e?.message || String(e);
-    throw new Error(`Relay handshake failed (projectId ${maskId(wcProjectId)}, t=${elapsed}s): ${m}`);
+    throw new Error(`init failed (phase=${phase}, ticks=${tickN}): ${m}`);
   }
-  clearInterval(ticker);
 
+  setPhase("attach-events");
+  console.log("[wc] phase:attach-events");
   wcProvider.on?.("display_uri", (uri) => {
     console.log("[wc] display_uri", uri?.slice(0, 40) + "…");
+    setPhase("display-uri-received");
     // Use a wallet universal-link wrapper so Telegram's WebView hands
     // the URL to MetaMask Mobile via iOS/Android Universal Links,
     // instead of a raw wc: scheme which Telegram tends to swallow.
@@ -169,13 +198,26 @@ async function ensureWalletConnected(EthereumProvider) {
   });
   wcProvider.on?.("connect", () => {
     console.log("[wc] connect");
+    setPhase("wallet-connected");
     $wcOpen.style.display = "none";
   });
   wcProvider.on?.("disconnect", (e) => console.log("[wc] disconnect", e));
 
-  if (!wcProvider.session) {
-    await wcProvider.connect();
+  try {
+    if (!wcProvider.session) {
+      setPhase("connect-call");
+      console.log("[wc] phase:connect-call");
+      await wcProvider.connect();
+      setPhase("connect-resolved");
+      console.log("[wc] phase:connect-resolved");
+    }
+  } catch (e) {
+    stopTickers();
+    const m = e?.message || String(e);
+    throw new Error(`connect failed (phase=${phase}, ticks=${tickN}): ${m}`);
   }
+
+  stopTickers();
   return wcProvider;
 }
 
