@@ -85,6 +85,35 @@ function maskId(id) {
   return `${id.slice(0, 4)}…${id.slice(-4)} (len=${id.length})`;
 }
 
+// initData is non-empty when launched from inside Telegram. In external
+// browsers telegram-web-app.js still loads (so `tg` exists), but initData
+// is empty.
+function isInTelegramWebView() {
+  return !!(tg?.initData);
+}
+
+// WC's connect() reliably hangs inside Telegram's WebView at the
+// session-propose relay publish step (known WC/Reown issue). Rather
+// than fight it, send the user to the same Mini App URL in their
+// real browser, where WC works normally. The session ID stays in
+// the URL so loadSession() picks up where this one left off, and the
+// verdict POST still notifies the bot so the user gets the result
+// in chat.
+function showOpenInBrowserPrompt() {
+  $wcOpen.textContent = "Open in browser to pay";
+  $wcOpen.href = "#";
+  $wcOpen.style.display = "block";
+  $wcOpen.onclick = (e) => {
+    e.preventDefault();
+    if (tg?.openLink) tg.openLink(window.location.href);
+  };
+  setStatus(
+    "Wallet pairing doesn't work inside Telegram. Tap to continue in your browser — the verdict will still be sent to this chat.",
+  );
+  $pay.disabled = true;
+  setBtnBusy(false);
+}
+
 // Telegram WebView blocks/partitions IndexedDB on some Android builds.
 // WC's @walletconnect/keyvaluestorage falls through to IDB by default,
 // and a blocked IDB request just hangs forever — that's the silent
@@ -241,6 +270,13 @@ async function payAndGrade() {
     let res = await fetch(`${apiBase}/check`, { method: "POST", headers, body });
 
     if (res.status === 402) {
+      // Server demands payment. WC's connect() reliably hangs in
+      // Telegram's WebView, so bounce out to the user's real browser
+      // before even loading WC.
+      if (isInTelegramWebView()) {
+        showOpenInBrowserPrompt();
+        return;
+      }
       // Server demands payment — now we load WC and pair the wallet.
       const { EthereumProvider } = await importWalletConnect();
       setStatus("Opening wallet…");
