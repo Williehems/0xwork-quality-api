@@ -109,8 +109,8 @@ async function sendHome(ctx) {
     .text("❓ How it works", "go:help");
 
   await ctx.reply(
-    `👋 <b>0xWork Quality Bot</b>\n\n` +
-      `Grade submissions before you approve or reject them.\n\n` +
+    `⚖️ <b>Gavel</b>\n<i>0xWork quality bot</i>\n\n` +
+      `Grade submissions, then approve or dispute them — all in chat.\n\n` +
       walletLine,
     { parse_mode: "HTML", reply_markup: kb },
   );
@@ -147,11 +147,12 @@ async function sendHelp(ctx) {
   const kb = new InlineKeyboard().text("📥 Inbox", "go:inbox").text("🏠 Home", "go:home");
   await ctx.reply(
     `<b>❓ How it works</b>\n\n` +
-      `You're a 0xWork poster. Workers submit work, you decide whether to approve or reject. This bot grades each submission so the call is fast and consistent.\n\n` +
+      `You're a 0xWork poster. Workers submit work, you decide whether to approve or dispute. Gavel grades each submission so the call is fast and consistent, then helps you settle on-chain without leaving the chat.\n\n` +
       `<b>1.</b> Bind your wallet → /wallet\n` +
       `<b>2.</b> Open your inbox → /inbox\n` +
-      `<b>3.</b> Tap a submission → bot fetches the work + infers a grading rubric\n` +
-      `<b>4.</b> Tap <b>Grade</b> → verdict with evidence and reasoning\n\n` +
+      `<b>3.</b> Tap a submission → Gavel fetches the work + infers a grading rubric\n` +
+      `<b>4.</b> Tap <b>Grade</b> → verdict with evidence and reasoning\n` +
+      `<b>5.</b> Tap <b>✅ Approve</b> or <b>⚠️ Dispute</b> → sign once on Base, settle on-chain\n\n` +
       `<b>Verdicts</b>\n` +
       `✅ <b>Approve</b> — meets requirements, no significant concerns\n` +
       `⚠️ <b>Review</b> — passes most signals but has a notable concern\n` +
