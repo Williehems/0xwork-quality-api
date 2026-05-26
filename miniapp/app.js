@@ -1,15 +1,17 @@
 // Telegram Mini App for 0xWork quality check.
 //
 // Flow:
-//   1. Read ?session=<id>&wcProjectId=<id> from the URL.
+//   1. Read ?session=<id> from the URL.
 //   2. GET /session/<id> to load the grading payload.
-//   3. On tap: lazy-import WalletConnect, pair the wallet, then drive the
-//      x402 dance via the inline client in ./x402-client.js
+//   3. On tap: per the chosen signing path (MetaMask injected or pasted
+//      private key) drive the x402 dance via the inline client in
+//      ./x402-client.js:
 //        a. POST /check — expect 402 with payment requirements.
-//        b. Sign EIP-3009 TransferWithAuthorization via the provider's
-//           native eth_signTypedData_v4.
+//        b. Sign EIP-3009 TransferWithAuthorization (MetaMask via the
+//           injected provider's eth_signTypedData_v4; PK via ethers
+//           locally — key never leaves the tab).
 //        c. Retry /check with the base64-JSON X-PAYMENT header.
-//   4. Return verdict to the bot via WebApp.sendData().
+//   4. POST /verdict/<id> so the bot can deliver to chat.
 
 import { signX402Authorization } from "./x402-client.js";
 
@@ -22,7 +24,6 @@ const sessionId = params.get("session");
 // Same-origin combined server hosts both the Mini App and bot/API.
 const apiBase = location.origin;
 const botBase = location.origin;
-const wcProjectId = params.get("wcProjectId") ?? "";
 
 const $task = document.getElementById("task");
 const $subMeta = document.getElementById("sub-meta");
@@ -30,9 +31,10 @@ const $pay = document.getElementById("pay");
 const $payLabel = document.getElementById("pay-label");
 const $status = document.getElementById("status");
 const $wcOpen = document.getElementById("wc-open");
+const $pkRow = document.getElementById("pk-row");
+const $pkInput = document.getElementById("pk-input");
 
 let payload = null;
-let wcProvider = null;
 
 window.addEventListener("error", (e) => {
   setStatus("Script error: " + (e.message || String(e.error || "unknown")), "err");
@@ -71,40 +73,110 @@ async function loadSession() {
   }
 }
 
-// Promise-based, prewarmed lazy import. Two reasons we use a promise
-// instead of caching the resolved module:
-//   1. We start the import on page load (see prewarmWalletConnect below),
-//      well before the user taps "Pair wallet and pay". This races against
-//      wallet-extension SES lockdown that freezes intrinsics like WebSocket,
-//      and shortens the perceived latency of the click.
-//   2. ?bundle=true on esm.sh both bundles deps and biases the import map
-//      toward the package's browser export. Without it, esm.sh has been
-//      observed to serve @walletconnect/ethereum-provider's Node entry —
-//      WC then prints ua=wc-2/.../node, and its relay transport uses a
-//      Node WebSocket shim that can't open a real socket in the browser.
-let walletConnectModPromise = null;
-function importWalletConnect() {
-  if (!walletConnectModPromise) {
-    walletConnectModPromise = import(
-      "https://esm.sh/@walletconnect/ethereum-provider@2.23.9?bundle=true"
-    );
+// === Signing paths ===
+
+const BASE_SEPOLIA_CHAIN_ID_HEX = "0x14a34"; // 84532
+
+// When multiple wallet extensions inject, the browser exposes a list at
+// window.ethereum.providers. Prefer MetaMask when present so the chain
+// switch and the signTypedData call route to the same wallet.
+function getInjectedProvider() {
+  const eth = window.ethereum;
+  if (!eth) return null;
+  if (Array.isArray(eth.providers) && eth.providers.length) {
+    const mm = eth.providers.find((p) => p.isMetaMask);
+    return mm ?? eth.providers[0];
   }
-  return walletConnectModPromise;
-}
-function prewarmWalletConnect() {
-  // Don't bother inside Telegram WebView — connect() hangs there anyway
-  // and we bounce to the external browser at the 402 step.
-  if (isInTelegramWebView()) return;
-  importWalletConnect().catch(() => {
-    // Swallow — the click handler will retry and surface the error then.
-  });
+  return eth;
 }
 
-function maskId(id) {
-  if (!id) return "(empty)";
-  if (id.length <= 8) return `len=${id.length}`;
-  return `${id.slice(0, 4)}…${id.slice(-4)} (len=${id.length})`;
+function openInMetaMaskAppBrowser() {
+  // metamask.app.link/dapp/<host+path> opens the page inside MetaMask
+  // Mobile's in-app browser, which auto-injects window.ethereum.
+  const stripped = window.location.href.replace(/^https?:\/\//, "");
+  window.location.href = `https://metamask.app.link/dapp/${stripped}`;
 }
+
+async function ensureBaseSepolia(provider) {
+  const current = await provider.request({ method: "eth_chainId" });
+  if (typeof current === "string" && current.toLowerCase() === BASE_SEPOLIA_CHAIN_ID_HEX) return;
+  try {
+    await provider.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: BASE_SEPOLIA_CHAIN_ID_HEX }],
+    });
+  } catch (err) {
+    // 4902 = unrecognized chain; some wallets surface it via -32603.
+    if (err && (err.code === 4902 || err.code === -32603)) {
+      await provider.request({
+        method: "wallet_addEthereumChain",
+        params: [{
+          chainId: BASE_SEPOLIA_CHAIN_ID_HEX,
+          chainName: "Base Sepolia",
+          nativeCurrency: { name: "Sepolia ETH", symbol: "ETH", decimals: 18 },
+          rpcUrls: ["https://sepolia.base.org"],
+          blockExplorerUrls: ["https://sepolia.basescan.org"],
+        }],
+      });
+    } else {
+      throw err;
+    }
+  }
+}
+
+async function connectMetaMask() {
+  const injected = getInjectedProvider();
+  if (!injected) {
+    setStatus("Opening MetaMask…");
+    openInMetaMaskAppBrowser();
+    return null; // page is navigating away
+  }
+  const accounts = await injected.request({ method: "eth_requestAccounts" });
+  if (!accounts?.length) throw new Error("MetaMask returned no account");
+  await ensureBaseSepolia(injected);
+  return { provider: injected, address: accounts[0] };
+}
+
+// Private-key path. Key stays in browser memory only — never POSTed, never
+// persisted. ethers.Wallet.signTypedData covers our EIP-712 case directly.
+let ethersModPromise = null;
+function importEthers() {
+  if (!ethersModPromise) {
+    ethersModPromise = import("https://cdn.jsdelivr.net/npm/ethers@6.13.4/+esm");
+  }
+  return ethersModPromise;
+}
+
+async function connectWithPrivateKey(rawKey) {
+  const key = rawKey.trim().startsWith("0x") ? rawKey.trim() : "0x" + rawKey.trim();
+  if (!/^0x[0-9a-fA-F]{64}$/.test(key)) {
+    throw new Error("Invalid private key — expected 64 hex chars (optionally 0x-prefixed)");
+  }
+  const ethers = await importEthers();
+  const wallet = new ethers.Wallet(key);
+  // Minimal EIP-1193-ish shim so x402-client.js can sign through .request()
+  // the same way it does for the MetaMask path.
+  const provider = {
+    request: async ({ method, params }) => {
+      if (method === "eth_chainId") return BASE_SEPOLIA_CHAIN_ID_HEX;
+      if (method === "eth_accounts" || method === "eth_requestAccounts") return [wallet.address];
+      if (method === "eth_signTypedData_v4") {
+        const typed = typeof params[1] === "string" ? JSON.parse(params[1]) : params[1];
+        const types = { ...typed.types };
+        delete types.EIP712Domain;
+        return wallet.signTypedData(typed.domain, types, typed.message);
+      }
+      throw new Error(`PK provider does not implement ${method}`);
+    },
+  };
+  return { provider, address: wallet.address };
+}
+
+function getSelectedConnectionMethod() {
+  return document.querySelector('input[name="conn"]:checked')?.value || "metamask";
+}
+
+// === Telegram WebView bounce ===
 
 // initData is non-empty when launched from inside Telegram. In external
 // browsers telegram-web-app.js still loads (so `tg` exists), but initData
@@ -117,13 +189,12 @@ function isInTelegramWebView() {
   return !!(tg?.initData);
 }
 
-// WC's connect() reliably hangs inside Telegram's WebView at the
-// session-propose relay publish step (known WC/Reown issue). Rather
-// than fight it, send the user to the same Mini App URL in their
-// real browser, where WC works normally. The session ID stays in
-// the URL so loadSession() picks up where this one left off, and the
-// verdict POST still notifies the bot so the user gets the result
-// in chat.
+// Wallet pairing reliably fails inside Telegram's WebView (relay hangs
+// for WC; MetaMask's deeplink can't escape the in-app browser either).
+// Send the user to the same Mini App URL in their real browser, where
+// both paths work. The session ID stays in the URL so loadSession() picks
+// up where this one left off, and the verdict POST still notifies the bot
+// so the user gets the result in chat.
 function showOpenInBrowserPrompt() {
   // Strip the `#tgWebAppData=...` hash so the external browser doesn't
   // re-init as a TG WebApp, and add ?fromTgBounce=1 so our detector
@@ -140,149 +211,12 @@ function showOpenInBrowserPrompt() {
       e.preventDefault();
       tg.openLink(cleanUrl);
     }
-    // else: fall through to default anchor behavior (already not in TG)
   };
   setStatus(
     "Wallet pairing doesn't work inside Telegram. Tap to continue in your browser — the verdict will still be sent to this chat.",
   );
   $pay.disabled = true;
   setBtnBusy(false);
-}
-
-// Telegram WebView blocks/partitions IndexedDB on some Android builds.
-// WC's @walletconnect/keyvaluestorage falls through to IDB by default,
-// and a blocked IDB request just hangs forever — that's the silent
-// "stuck at Connecting to relay" symptom with no error from our timeout
-// (no exception is raised, init() just never resolves). Hand WC an
-// in-memory store so it never touches IDB.
-function createMemStorage() {
-  const m = new Map();
-  return {
-    async init() {},
-    async getKeys() { return [...m.keys()]; },
-    async getEntries() { return [...m.entries()]; },
-    async getItem(key) { return m.get(key); },
-    async setItem(key, value) { m.set(key, value); },
-    async removeItem(key) { m.delete(key); },
-  };
-}
-
-async function ensureWalletConnected(EthereumProvider) {
-  if (wcProvider?.accounts?.length) return wcProvider;
-
-  if (!wcProjectId) {
-    throw new Error(
-      "Wallet config missing from this link. Reopen Pay & Grade from the bot chat — if you see this again, the bot operator needs to set REOWN_PROJECT_ID.",
-    );
-  }
-
-  // Phase-tracked init. Each "phase" is a step we want to attribute a
-  // freeze/error to. The ticker shows phase + elapsed time so the user
-  // can tell us which step is stuck. Ticks fast (100ms) for the first
-  // ~2s to distinguish "frozen main thread" from "we just haven't ticked
-  // yet" — setInterval(1000ms) fires its first callback at 1000ms, which
-  // can look indistinguishable from a sync block.
-  let phase = "starting";
-  let phaseStart = performance.now();
-  const setPhase = (p) => { phase = p; phaseStart = performance.now(); };
-  const fmtElapsed = () => {
-    const ms = performance.now() - phaseStart;
-    return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
-  };
-  setStatus(`[${phase} 0ms] projectId ${maskId(wcProjectId)}`);
-  let tickN = 0;
-  let fastTicker = null;
-  let slowTicker = null;
-  const stopTickers = () => {
-    if (fastTicker) clearInterval(fastTicker);
-    if (slowTicker) clearInterval(slowTicker);
-  };
-  const tickMsg = () => `[${phase} ${fmtElapsed()}] tick #${tickN}, projectId ${maskId(wcProjectId)}`;
-  fastTicker = setInterval(() => {
-    tickN++;
-    setStatus(tickMsg());
-    // After 20 fast ticks (~2s), drop to 1s interval to reduce noise.
-    if (tickN === 20) {
-      clearInterval(fastTicker);
-      fastTicker = null;
-      slowTicker = setInterval(() => { tickN++; setStatus(tickMsg()); }, 1000);
-    }
-  }, 100);
-
-  try {
-    setPhase("init-call");
-    console.log("[wc] phase:init-call");
-    const initPromise = EthereumProvider.init({
-      projectId: wcProjectId,
-      optionalChains: [84532], // Base Sepolia (optional so wallets without it can still pair)
-      showQrModal: false,
-      storage: createMemStorage(),
-      metadata: {
-        name: "0xWork Quality Check",
-        description: "Pay-per-grade submission grader",
-        url: location.origin,
-        icons: [],
-      },
-    });
-    const timeout = new Promise((_, rej) =>
-      setTimeout(() => rej(new Error(
-        `Reown relay didn't respond in 30s (phase=${phase}, ticks=${tickN}). ` +
-        `Origin ${location.origin}. ` +
-        `Likely causes: origin not in Reown allowed-origins list, ` +
-        `WebSocket blocked by network/WebView, or relay outage.`
-      )), 30000),
-    );
-    wcProvider = await Promise.race([initPromise, timeout]);
-    setPhase("init-resolved");
-    console.log("[wc] phase:init-resolved");
-  } catch (e) {
-    stopTickers();
-    const m = e?.message || String(e);
-    throw new Error(`init failed (phase=${phase}, ticks=${tickN}): ${m}`);
-  }
-
-  setPhase("attach-events");
-  console.log("[wc] phase:attach-events");
-  wcProvider.on?.("display_uri", (uri) => {
-    console.log("[wc] display_uri", uri?.slice(0, 40) + "…");
-    setPhase("display-uri-received");
-    // Use a wallet universal-link wrapper so Telegram's WebView hands
-    // the URL to MetaMask Mobile via iOS/Android Universal Links,
-    // instead of a raw wc: scheme which Telegram tends to swallow.
-    const universalLink = "https://metamask.app.link/wc?uri=" + encodeURIComponent(uri);
-    $wcOpen.href = universalLink;
-    $wcOpen.style.display = "block";
-    $wcOpen.onclick = (e) => {
-      if (tg?.openLink) {
-        e.preventDefault();
-        tg.openLink(universalLink, { try_instant_view: false });
-      }
-    };
-    setStatus("Tap below — opens MetaMask Mobile to approve the pairing.");
-  });
-  wcProvider.on?.("connect", () => {
-    console.log("[wc] connect");
-    setPhase("wallet-connected");
-    $wcOpen.style.display = "none";
-  });
-  wcProvider.on?.("disconnect", (e) => console.log("[wc] disconnect", e));
-
-  try {
-    if (!wcProvider.session) {
-      setPhase("connect-call");
-      console.log("[wc] phase:connect-call");
-      await wcProvider.connect();
-      setPhase("connect-resolved");
-      console.log("[wc] phase:connect-resolved");
-    }
-  } catch (e) {
-    stopTickers();
-    const m = e?.message || String(e);
-    throw new Error(`connect failed (phase=${phase}, ticks=${tickN}): ${m}`);
-  }
-
-  stopTickers();
-  return wcProvider;
 }
 
 async function payAndGrade() {
@@ -300,27 +234,38 @@ async function payAndGrade() {
 
     // Try /check first without payment. If the server's running in bypass
     // mode (or otherwise doesn't require payment for this caller) it
-    // returns 200 immediately and we skip the whole WalletConnect dance.
+    // returns 200 immediately and we skip the whole signing dance.
     setStatus("Submitting for grading…");
     let res = await fetch(`${apiBase}/check`, { method: "POST", headers, body });
 
     if (res.status === 402) {
-      // Server demands payment. WC's connect() reliably hangs in
-      // Telegram's WebView, so bounce out to the user's real browser
-      // before even loading WC.
       if (isInTelegramWebView()) {
         showOpenInBrowserPrompt();
         return;
       }
-      // Server demands payment — now we load WC and pair the wallet.
-      setStatus("Loading wallet library…");
-      const { EthereumProvider } = await importWalletConnect();
-      setStatus("Opening wallet…");
-      const provider = await ensureWalletConnected(EthereumProvider);
-      const [address] = provider.accounts;
-      if (!address) throw new Error("Wallet paired but returned no account for Base Sepolia (chain 84532). Make sure your wallet is unlocked and has Base Sepolia enabled.");
 
-      setStatus(`Wallet paired (${short(address)}). Signing payment…`);
+      const method = getSelectedConnectionMethod();
+      let conn;
+      if (method === "pk") {
+        const pk = $pkInput.value;
+        if (!pk) {
+          setStatus("Paste a private key first.", "err");
+          $pay.disabled = false;
+          setBtnBusy(false);
+          return;
+        }
+        setStatus("Loading signer…");
+        conn = await connectWithPrivateKey(pk);
+        $pkInput.value = ""; // wipe immediately so it can't be re-read
+      } else {
+        setStatus("Connecting MetaMask…");
+        conn = await connectMetaMask();
+        if (!conn) return; // deeplink redirect in flight
+      }
+
+      const { provider, address } = conn;
+
+      setStatus(`Signer ready (${short(address)}). Signing payment…`);
       const offer = await res.json();
       const accepts = offer?.accepts;
       if (!Array.isArray(accepts) || accepts.length === 0) {
@@ -379,13 +324,17 @@ function setStatus(msg, kind) {
   $status.className = "status" + (kind === "err" ? " err" : kind === "ok" ? " ok" : "");
 }
 
+function labelForMethod(m) {
+  return m === "pk" ? "Sign with key and pay" : "Connect MetaMask and pay";
+}
+
 function setBtnBusy(busy) {
   if (busy) {
     $pay.classList.add("busy");
     $payLabel.textContent = "Working…";
   } else {
     $pay.classList.remove("busy");
-    $payLabel.textContent = "Pair wallet and pay";
+    $payLabel.textContent = labelForMethod(getSelectedConnectionMethod());
   }
 }
 
@@ -396,6 +345,15 @@ function fail(msg) {
   if ($subMeta.textContent === "Loading…") $subMeta.textContent = "—";
 }
 
+// Wire connection-method toggle: show/hide PK input, update button label.
+document.querySelectorAll('input[name="conn"]').forEach((r) => {
+  r.addEventListener("change", () => {
+    const m = getSelectedConnectionMethod();
+    $pkRow.hidden = m !== "pk";
+    if (m !== "pk") $pkInput.value = "";
+    $payLabel.textContent = labelForMethod(m);
+  });
+});
+
 $pay.addEventListener("click", payAndGrade);
 loadSession();
-prewarmWalletConnect();

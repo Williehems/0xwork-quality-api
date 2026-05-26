@@ -151,6 +151,55 @@
         color: var(--hint);
         text-align: center;
       }
+      .conn-method {
+        margin: 16px 0 0 0;
+        padding: 10px 14px 12px;
+        border: 1px solid #2c2c2e;
+        border-radius: 12px;
+      }
+      .conn-method legend {
+        padding: 0 6px;
+        font-size: 11px;
+        color: var(--hint);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      .conn-opt {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+        padding: 6px 0;
+        cursor: pointer;
+      }
+      .conn-opt input { accent-color: var(--accent); }
+      .warn {
+        color: #ff9f0a;
+        font-style: normal;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin-left: 6px;
+        font-weight: 600;
+      }
+      .warn-body {
+        color: #ff9f0a;
+        font-size: 12px;
+        margin: 8px 0 0 0;
+        line-height: 1.4;
+      }
+      #pk-input {
+        width: 100%;
+        margin-top: 10px;
+        padding: 10px 12px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 13px;
+        background: #0d0d0d;
+        border: 1px solid #2c2c2e;
+        color: var(--text);
+        border-radius: 8px;
+      }
+      #pk-input:focus { outline: none; border-color: var(--accent); }
     </style>
   </head>
   <body>
@@ -174,14 +223,40 @@
       <div class="price-note">Paid via x402. Funds go to API operator.</div>
     </div>
 
+    <fieldset class="conn-method">
+      <legend>Connection</legend>
+      <label class="conn-opt">
+        <input type="radio" name="conn" value="metamask" checked />
+        <span>Connect MetaMask wallet</span>
+      </label>
+      <label class="conn-opt">
+        <input type="radio" name="conn" value="pk" />
+        <span>Paste private key <em class="warn">testnet only</em></span>
+      </label>
+      <div id="pk-row" hidden>
+        <input
+          type="password"
+          id="pk-input"
+          autocomplete="off"
+          autocapitalize="off"
+          autocorrect="off"
+          spellcheck="false"
+          placeholder="0x… 64 hex chars (Base Sepolia funded)"
+        />
+        <p class="warn-body">
+          The key stays in this browser tab — never sent to our server, never saved. Refresh wipes it. Do not paste a key that holds real funds.
+        </p>
+      </div>
+    </fieldset>
+
     <button id="pay" disabled>
-      <span id="pay-label">Pair wallet and pay</span>
+      <span id="pay-label">Connect MetaMask and pay</span>
     </button>
     <a id="wc-open" class="wc-link" style="display:none" target="_blank" rel="noopener">Open in wallet app</a>
     <div class="status" id="status"></div>
 
     <div class="footer">x402 protocol &middot; grading by Llama 3.3</div>
 
-    <script type="module" src="./app.js?v=17"></script>
+    <script type="module" src="./app.js?v=18"></script>
   </body>
 </html>
