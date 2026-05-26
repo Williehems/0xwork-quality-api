@@ -39,7 +39,7 @@ window.addEventListener("error", (e) => {
 });
 window.addEventListener("unhandledrejection", (e) => {
   const msg = e.reason?.message || String(e.reason || "unknown");
-  setStatus("Promise error: " + msg, "err");
+  setStatus("Error: " + msg, "err");
 });
 
 async function loadSession() {
@@ -52,7 +52,7 @@ async function loadSession() {
   try {
     const res = await fetch(url, { cache: "no-store" });
     if (res.status === 404) {
-      fail("Session expired. Go back to chat, open /inbox and pick the task again.");
+      fail("Session not found — it expired (30min TTL) or the bot restarted. Open /inbox in the chat and pick the task again.");
       return;
     }
     if (!res.ok) {
@@ -108,7 +108,7 @@ async function ensureWalletConnected(EthereumProvider) {
 
   if (!wcProjectId) {
     throw new Error(
-      "Wallet pairing isn't configured (REOWN_PROJECT_ID missing). Ask the bot operator.",
+      "Wallet config missing from this link. Reopen Pay & Grade from the bot chat — if you see this again, the bot operator needs to set REOWN_PROJECT_ID.",
     );
   }
 
@@ -138,8 +138,9 @@ async function ensureWalletConnected(EthereumProvider) {
     });
     const timeout = new Promise((_, rej) =>
       setTimeout(() => rej(new Error(
-        `relay never responded after 30s (elapsed=${elapsed}s) — projectId likely not allowed for this origin (` +
-        location.origin + "). Re-check the Reown allowed-origins list."
+        `Reown relay didn't respond in 30s (elapsed=${elapsed}s). ` +
+        `Likely causes: ${location.origin} not in the Reown allowed-origins list, ` +
+        `WebSocket blocked by the network/WebView, or a relay outage.`
       )), 30000),
     );
     wcProvider = await Promise.race([initPromise, timeout]);
@@ -177,14 +178,6 @@ async function payAndGrade() {
   $pay.disabled = true;
   setBtnBusy(true);
   try {
-    const { EthereumProvider } = await importWalletConnect();
-
-    setStatus("Opening wallet…");
-    const provider = await ensureWalletConnected(EthereumProvider);
-    const [address] = provider.accounts;
-    if (!address) throw new Error("Wallet did not return an account.");
-
-    setStatus(`Wallet paired (${short(address)}). Requesting payment terms…`);
     const body = JSON.stringify({
       task_type: payload.task_type,
       tier: payload.tier,
@@ -193,9 +186,21 @@ async function payAndGrade() {
     });
     const headers = { "content-type": "application/json" };
 
+    // Try /check first without payment. If the server's running in bypass
+    // mode (or otherwise doesn't require payment for this caller) it
+    // returns 200 immediately and we skip the whole WalletConnect dance.
+    setStatus("Submitting for grading…");
     let res = await fetch(`${apiBase}/check`, { method: "POST", headers, body });
 
     if (res.status === 402) {
+      // Server demands payment — now we load WC and pair the wallet.
+      const { EthereumProvider } = await importWalletConnect();
+      setStatus("Opening wallet…");
+      const provider = await ensureWalletConnected(EthereumProvider);
+      const [address] = provider.accounts;
+      if (!address) throw new Error("Wallet paired but returned no account for Base Sepolia (chain 84532). Make sure your wallet is unlocked and has Base Sepolia enabled.");
+
+      setStatus(`Wallet paired (${short(address)}). Signing payment…`);
       const offer = await res.json();
       const accepts = offer?.accepts;
       if (!Array.isArray(accepts) || accepts.length === 0) {
@@ -203,7 +208,6 @@ async function payAndGrade() {
       }
       const reqSpec = accepts.find((a) => a.scheme === "exact") ?? accepts[0];
 
-      setStatus("Sign the payment in your wallet…");
       const xPayment = await signX402Authorization(
         provider, address, offer.x402Version ?? 1, reqSpec,
       );
