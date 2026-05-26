@@ -71,12 +71,33 @@ async function loadSession() {
   }
 }
 
-let walletConnectMod = null;
-async function importWalletConnect() {
-  if (walletConnectMod) return walletConnectMod;
-  setStatus("Loading wallet library…");
-  walletConnectMod = await import("https://esm.sh/@walletconnect/ethereum-provider@2.23.9");
-  return walletConnectMod;
+// Promise-based, prewarmed lazy import. Two reasons we use a promise
+// instead of caching the resolved module:
+//   1. We start the import on page load (see prewarmWalletConnect below),
+//      well before the user taps "Pair wallet and pay". This races against
+//      wallet-extension SES lockdown that freezes intrinsics like WebSocket,
+//      and shortens the perceived latency of the click.
+//   2. ?bundle=true on esm.sh both bundles deps and biases the import map
+//      toward the package's browser export. Without it, esm.sh has been
+//      observed to serve @walletconnect/ethereum-provider's Node entry —
+//      WC then prints ua=wc-2/.../node, and its relay transport uses a
+//      Node WebSocket shim that can't open a real socket in the browser.
+let walletConnectModPromise = null;
+function importWalletConnect() {
+  if (!walletConnectModPromise) {
+    walletConnectModPromise = import(
+      "https://esm.sh/@walletconnect/ethereum-provider@2.23.9?bundle=true"
+    );
+  }
+  return walletConnectModPromise;
+}
+function prewarmWalletConnect() {
+  // Don't bother inside Telegram WebView — connect() hangs there anyway
+  // and we bounce to the external browser at the 402 step.
+  if (isInTelegramWebView()) return;
+  importWalletConnect().catch(() => {
+    // Swallow — the click handler will retry and surface the error then.
+  });
 }
 
 function maskId(id) {
@@ -292,6 +313,7 @@ async function payAndGrade() {
         return;
       }
       // Server demands payment — now we load WC and pair the wallet.
+      setStatus("Loading wallet library…");
       const { EthereumProvider } = await importWalletConnect();
       setStatus("Opening wallet…");
       const provider = await ensureWalletConnected(EthereumProvider);
@@ -376,3 +398,4 @@ function fail(msg) {
 
 $pay.addEventListener("click", payAndGrade);
 loadSession();
+prewarmWalletConnect();
