@@ -1,4 +1,5 @@
 import { paymentMiddleware } from "x402-express";
+import { createFacilitatorConfig } from "@coinbase/x402";
 import { config } from "../config.js";
 
 /**
@@ -21,6 +22,14 @@ export function mountX402(app) {
     return;
   }
 
+  // Prefer Coinbase CDP when API keys are provided (production-grade,
+  // free for the first 1k tx/month). Fall back to whatever facilitatorUrl
+  // is configured (xpay etc.) when CDP creds are absent — useful for
+  // local dev or as an emergency override via the Render dashboard.
+  const facilitator = config.x402.cdpApiKeyId && config.x402.cdpApiKeySecret
+    ? createFacilitatorConfig(config.x402.cdpApiKeyId, config.x402.cdpApiKeySecret)
+    : { url: config.x402.facilitatorUrl };
+
   app.use(
     paymentMiddleware(
       config.x402.payTo,
@@ -34,7 +43,7 @@ export function mountX402(app) {
           },
         },
       },
-      { url: config.x402.facilitatorUrl },
+      facilitator,
     ),
   );
 

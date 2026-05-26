@@ -33,6 +33,10 @@ services:
         value: https://facilitator.xpay.sh
       - key: X402_BYPASS
         value: "false"
+      - key: CDP_API_KEY_ID
+        sync: false
+      - key: CDP_API_KEY_SECRET
+        sync: false
       - key: PRICE_FULL_USDC
         value: "0.10"
       - key: REOWN_PROJECT_ID

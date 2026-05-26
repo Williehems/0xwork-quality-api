@@ -37,6 +37,8 @@ export const config = {
     network: optional("X402_NETWORK", "base-sepolia"),
     facilitatorUrl: optional("X402_FACILITATOR_URL", "https://x402.org/facilitator"),
     bypass: bool("X402_BYPASS", false),
+    cdpApiKeyId: optional("CDP_API_KEY_ID", ""),
+    cdpApiKeySecret: optional("CDP_API_KEY_SECRET", ""),
   },
 
   pricing: {
