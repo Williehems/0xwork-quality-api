@@ -654,7 +654,7 @@ bot.catch((err) => console.error("[bot] error:", err));
 const http = express();
 http.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
-  res.header("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.header("Access-Control-Allow-Headers", "Content-Type");
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
@@ -682,6 +682,27 @@ http.get("/session/:id", (req, res) => {
     submission: payload.submission,
     meta: payload.meta ?? null,
   });
+});
+
+// Mini App opened via inline keyboard can't use tg.sendData() — it POSTs the
+// verdict here instead, and we forward it to the user's chat as a message.
+http.use(express.json({ limit: "32kb" }));
+http.post("/verdict/:sessionId", async (req, res) => {
+  try {
+    const payload = getSession(req.params.sessionId);
+    if (!payload) return res.status(404).json({ error: "session_not_found" });
+    const userId = payload.userId;
+    if (!userId) return res.status(400).json({ error: "session_has_no_user" });
+    const verdict = req.body;
+    await bot.api.sendMessage(userId, renderVerdict(verdict, {}), {
+      parse_mode: "HTML",
+      reply_markup: postVerdictKeyboard(),
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("[bot] /verdict send failed:", err);
+    res.status(500).json({ error: "send_failed", message: err.message });
+  }
 });
 
 // Mount the API (/healthz, /check) on the same server.

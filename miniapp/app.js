@@ -126,7 +126,7 @@ async function ensureWalletConnected(EthereumProvider) {
   try {
     const initPromise = EthereumProvider.init({
       projectId: wcProjectId,
-      chains: [84532], // Base Sepolia
+      optionalChains: [84532], // Base Sepolia (optional so wallets without it can still pair)
       showQrModal: false,
       storage: createMemStorage(),
       metadata: {
@@ -159,6 +159,12 @@ async function ensureWalletConnected(EthereumProvider) {
     const universalLink = "https://metamask.app.link/wc?uri=" + encodeURIComponent(uri);
     $wcOpen.href = universalLink;
     $wcOpen.style.display = "block";
+    $wcOpen.onclick = (e) => {
+      if (tg?.openLink) {
+        e.preventDefault();
+        tg.openLink(universalLink, { try_instant_view: false });
+      }
+    };
     setStatus("Tap below — opens MetaMask Mobile to approve the pairing.");
   });
   wcProvider.on?.("connect", () => {
@@ -228,8 +234,15 @@ async function payAndGrade() {
     const verdict = await res.json();
     setStatus("Graded. Returning verdict to chat…", "ok");
 
+    const deliverRes = await fetch(`${apiBase}/verdict/${encodeURIComponent(sessionId)}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(verdict),
+    });
+    if (!deliverRes.ok) {
+      throw new Error("Couldn't deliver verdict to chat: API " + deliverRes.status);
+    }
     if (tg) {
-      tg.sendData(JSON.stringify(verdict));
       tg.close();
     } else {
       setStatus(JSON.stringify(verdict, null, 2), "ok");
