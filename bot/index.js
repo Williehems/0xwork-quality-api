@@ -296,6 +296,58 @@ bot.callbackQuery(/^pick:(\d+)$/, async (ctx) => {
     return;
   }
 
+  const taskType = normalizeCategory(task.category);
+
+  // Video submissions are tweet/video URLs — the grader fetches content itself via
+  // oEmbed + vision. Skip the proof-content download step for video tasks; it would
+  // just scrape a JS-rendered Twitter page and return garbage text.
+  if (taskType === "video") {
+    await bot.api.editMessageText(
+      ctx.chat.id, loading.message_id,
+      `📥 Loaded task #${taskId}\n🧠 Inferring rubric…`,
+    );
+    let rubric;
+    try {
+      rubric = await inferRubric(task);
+    } catch (err) {
+      await bot.api.editMessageText(
+        ctx.chat.id, loading.message_id,
+        `Couldn't infer the rubric — ${esc(err.message)}.\nTry again or use /manual.`,
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+    const sessionId = `${ctx.from.id}:${Date.now()}`;
+    setSession(sessionId, {
+      task_type: taskType,
+      tier: "full",
+      requirements: {
+        title: rubric.title,
+        topic_keywords: rubric.topic_keywords,
+        notes: rubric.notes,
+      },
+      submission: task.proofUrl ?? "",
+      meta: {
+        task_id: task.id,
+        bounty: task.bounty,
+        worker_address: task.workerAddress,
+        proof_url: task.proofUrl,
+        delivery_description: task.deliveryDescription,
+        category: task.category,
+        submitted_at: task.submittedAt,
+        submission_source: "video_url",
+      },
+      userId: ctx.from.id,
+      messageId: loading.message_id,
+    });
+    await bot.api.editMessageText(
+      ctx.chat.id, loading.message_id,
+      renderRubricConfirm(task, rubric, null, "video", null),
+      { parse_mode: "HTML", reply_markup: rubricKeyboard(sessionId) },
+    );
+    return;
+  }
+
   await bot.api.editMessageText(
     ctx.chat.id, loading.message_id,
     `📥 Loaded task #${taskId}\n⏳ Fetching submission…`,
@@ -323,7 +375,7 @@ bot.callbackQuery(/^pick:(\d+)$/, async (ctx) => {
 
   const sessionId = `${ctx.from.id}:${Date.now()}`;
   const baseSession = {
-    task_type: normalizeCategory(task.category),
+    task_type: taskType,
     tier: "full",
     requirements: {
       title: rubric.title,
@@ -1168,6 +1220,7 @@ function normalizeCategory(cat) {
   if (["research"].includes(c)) return "research";
   if (["data", "analytics"].includes(c)) return "data";
   if (["social", "twitter", "x post", "x_post", "tweet"].includes(c)) return "social";
+  if (["video", "media", "reel", "clip", "tiktok"].includes(c)) return "video";
   if (["writing", "content", "marketing"].includes(c)) return "writing";
   return "writing"; // safe default
 }

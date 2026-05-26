@@ -1,10 +1,19 @@
 import { runHeuristics, normalizeTaskType } from "./heuristics/index.js";
 import { llmGrade } from "./llm.js";
+import { fetchVideoContent, llmGradeVideo } from "./video.js";
 import { config } from "../config.js";
 
 export async function grade({ task_type, tier, requirements, submission }) {
   const category = normalizeTaskType(task_type);
-  const heuristics = runHeuristics({ task_type: category, submission, requirements });
+
+  // Video submissions are URLs — fetch tweet content and optional thumbnail before
+  // running heuristics. All other categories work on pre-extracted text as before.
+  let videoData = null;
+  if (category === "video") {
+    videoData = await fetchVideoContent(submission);
+  }
+
+  const heuristics = runHeuristics({ task_type: category, submission, requirements, videoData });
 
   if (tier === "fast" || !config.groq.enabled) {
     return {
@@ -19,7 +28,10 @@ export async function grade({ task_type, tier, requirements, submission }) {
   }
 
   try {
-    const llm = await llmGrade({ task_type: category, requirements, submission, heuristics });
+    const llm = category === "video"
+      ? await llmGradeVideo({ task_type: category, requirements, videoData, heuristics })
+      : await llmGrade({ task_type: category, requirements, submission, heuristics });
+
     return {
       task_type: category,
       tier: "full",
@@ -48,7 +60,17 @@ export async function grade({ task_type, tier, requirements, submission }) {
 }
 
 function heuristicVerdict(h) {
-  // Category-agnostic base rules, then category-specific signals.
+  // Video has independent logic — skip global word_count / topic_coverage checks
+  // which would misfire on empty tweet text.
+  if (h.category === "video") {
+    if (h.heuristic_verdict === "reject") return "reject";
+    if (h.heuristic_verdict === "review") return "review";
+    if (h.topic_coverage?.score != null && h.topic_coverage.score < 0.3) return "reject";
+    if (h.topic_coverage?.score != null && h.topic_coverage.score < 0.6) return "review";
+    return "approve";
+  }
+
+  // Category-agnostic base rules.
   if (h.word_count?.required != null && !h.word_count.pass) return "reject";
   if (h.topic_coverage?.score != null && h.topic_coverage.score < 0.5) return "reject";
 
@@ -73,7 +95,12 @@ function heuristicVerdict(h) {
 
 function heuristicReason(h) {
   const bits = [];
-  if (h.word_count?.required != null) {
+  if (h.category === "video") {
+    bits.push(`platform: ${h.platform}`);
+    if (!h.has_transcript) bits.push("no tweet text");
+    if (!h.has_visual) bits.push("no thumbnail");
+    if (h.content_length) bits.push(`${h.content_length.chars} chars`);
+  } else if (h.word_count?.required != null) {
     bits.push(
       `word count ${h.word_count.submitted}/${h.word_count.required} (${h.word_count.pass ? "ok" : "fail"})`,
     );
@@ -94,7 +121,7 @@ function heuristicReason(h) {
     if (h.format) bits.push(`format: ${h.format}`);
     if (h.csv_shape) bits.push(`${h.csv_shape.row_count} rows × ${h.csv_shape.column_count} cols`);
     if (h.json_shape) bits.push(`json: ${h.json_shape.top_type}`);
-  } else {
+  } else if (h.category !== "video") {
     if (h.readability?.band && h.readability.band !== "unknown") {
       bits.push(`readability ${h.readability.band}`);
     }
