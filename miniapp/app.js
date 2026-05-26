@@ -239,12 +239,17 @@ async function payAndGrade() {
     let res = await fetch(`${apiBase}/check`, { method: "POST", headers, body });
 
     if (res.status === 402) {
-      if (isInTelegramWebView()) {
+      const method = getSelectedConnectionMethod();
+
+      // MetaMask can't sign inside TG's WebView (no window.ethereum, and
+      // a deeplink would dump the user into MM Mobile -- losing the TG
+      // chat context). Bounce to the user's real browser for that path.
+      // The PK path signs locally with ethers, so it works fine in-place.
+      if (method === "metamask" && isInTelegramWebView()) {
         showOpenInBrowserPrompt();
         return;
       }
 
-      const method = getSelectedConnectionMethod();
       let conn;
       if (method === "pk") {
         const pk = $pkInput.value;
