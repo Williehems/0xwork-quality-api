@@ -30,9 +30,9 @@ services:
       - key: X402_NETWORK
         value: base-sepolia
       - key: X402_FACILITATOR_URL
-        value: https://x402.org/facilitator
+        value: https://facilitator.xpay.sh
       - key: X402_BYPASS
-        value: "true"
+        value: "false"
       - key: PRICE_FULL_USDC
         value: "0.10"
       - key: REOWN_PROJECT_ID
