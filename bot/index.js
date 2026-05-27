@@ -935,6 +935,7 @@ http.get("/session/:id", (req, res) => {
     submission: payload.submission,
     meta: payload.meta ?? null,
     task: payload.task ?? null,
+    price: settings.get("price", config.pricing.full),
     bot_username: botUsername || null,
   });
 });
@@ -1129,7 +1130,8 @@ function composeSummaryGradeText(meta) {
 }
 
 function rubricKeyboard(sessionId) {
-  const gradeLabel = MINIAPP_READY ? "🎯 Grade (0.10 USDC)" : "🎯 Grade";
+  const price = settings.get("price", config.pricing.full);
+  const gradeLabel = MINIAPP_READY ? `🎯 Grade (${price} USDC)` : "🎯 Grade";
   return new InlineKeyboard()
     .text(gradeLabel, `confirm:${sessionId}`)
     .row()

@@ -123,6 +123,9 @@ async function loadSession() {
     }
     payload = await res.json();
     botUsername = payload.bot_username || "";
+    // Update the grade-mode price display from the server's current setting.
+    const $gradePrice = document.getElementById("grade-price");
+    if ($gradePrice && payload.price) $gradePrice.textContent = payload.price;
     if (action === "approve" || action === "dispute") {
       renderActionMode(payload, action);
     } else {
