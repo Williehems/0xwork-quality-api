@@ -34,7 +34,12 @@ export function topicCoverage(text, keywords) {
   const hits = [];
   const missing = [];
   for (const kw of keywords) {
-    if (lower.includes(kw.toLowerCase())) hits.push(kw);
+    const kwLower = kw.toLowerCase();
+    // Exact substring match first, then fuzzy: keyword appears inside a longer
+    // token (e.g. "0xwork" hits "0xwork.org", "defi" hits "defi-native").
+    const hit = lower.includes(kwLower) ||
+      lower.split(/\s+/).some(token => token.replace(/[^a-z0-9]/g, "").includes(kwLower.replace(/[^a-z0-9]/g, "")));
+    if (hit) hits.push(kw);
     else missing.push(kw);
   }
   return {

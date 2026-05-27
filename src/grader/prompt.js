@@ -35,7 +35,7 @@ RESEARCH — Use writing heuristics + citations (url_count, unique_domains, ref_
 
 DATA — Format detection (json, csv, markdown_table, prose). For json: validate parse, check top_keys. For csv: validate row_count, column_count, headers. For prose-form data reports: fall back to writing heuristics. "json_parse_failed" or "very_few_rows" → reject.
 
-SOCIAL — Use character_count vs limit (default 280 for Twitter/X), hashtags, mentions, links. Over char_limit → reject. Missing hashtags or very_short_post → review for engagement. Don't penalize casual tone or low readability.
+SOCIAL — Use character_count vs limit (default 280 for Twitter/X), hashtags, mentions, links. Over char_limit → reject. Missing hashtags or very_short_post → review for engagement. Don't penalize casual tone, low readability, or short sentences — punchy short sentences are correct style for social posts.
 
 VIDEO — Submission is a Twitter/X post (or similar) containing a video. Use has_transcript (tweet text available) and has_visual (thumbnail attached). If no_transcript AND no_visual → reject. Evaluate tweet text for topic relevance; use thumbnail image(s) to assess visual quality, production value, and whether content matches the task. Missing keywords in a short tweet is less damning than in a long written piece — weigh intent.`;
 
