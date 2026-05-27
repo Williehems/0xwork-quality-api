@@ -19,7 +19,7 @@
     "express": "^4.21.1",
     "express-rate-limit": "^8.5.2",
     "grammy": "^1.30.0",
-    "groq-sdk": "^0.9.1",
+    "groq-sdk": "^1.2.0",
     "html-to-text": "^10.0.0",
     "pdf-parse": "^2.4.5",
     "pg": "^8.21.0",
