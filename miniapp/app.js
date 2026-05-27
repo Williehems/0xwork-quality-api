@@ -94,6 +94,7 @@ const $disputeHeading = document.getElementById("dispute-heading");
 
 let payload = null;
 let botUsername = "";
+let sessionSecret = "";
 
 window.addEventListener("error", (e) => {
   setStatus("Script error: " + (e.message || String(e.error || "unknown")), "err");
@@ -123,6 +124,9 @@ async function loadSession() {
     }
     payload = await res.json();
     botUsername = payload.bot_username || "";
+    // Store session secret for authenticating /verdict and /action-result POSTs.
+    // The server now requires X-Session-Secret on those endpoints.
+    sessionSecret = payload.session_secret || "";
     // Update the grade-mode price display from the server's current setting.
     const $gradePrice = document.getElementById("grade-price");
     if ($gradePrice && payload.price) $gradePrice.textContent = payload.price;
@@ -379,7 +383,7 @@ async function payAndGrade() {
 
   const deliverRes = await fetch(`${apiBase}/verdict/${encodeURIComponent(sessionId)}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "x-session-secret": sessionSecret },
     body: JSON.stringify(verdict),
   });
   if (!deliverRes.ok) {
@@ -428,7 +432,7 @@ async function signAndSendAction(kind) {
   const resultBody = { action: kind, taskId, txHash };
   const r = await fetch(`${apiBase}/action-result/${encodeURIComponent(sessionId)}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "x-session-secret": sessionSecret },
     body: JSON.stringify(resultBody),
   });
   if (!r.ok) {

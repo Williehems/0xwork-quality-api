@@ -234,16 +234,19 @@ export async function llmGradeVideo({ task_type, requirements, videoData, heuris
   // Use vision model only when we actually have images — otherwise save cost/latency.
   const model = videoData.thumbnailUrls.length > 0 ? VISION_MODEL : config.groq.model;
 
-  const completion = await groqClient().chat.completions.create({
-    model,
-    messages: [
-      { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: userContent },
-    ],
-    response_format: { type: "json_object" },
-    temperature: 0.2,
-    max_tokens: 600,
-  });
+  const completion = await groqClient().chat.completions.create(
+    {
+      model,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: userContent },
+      ],
+      response_format: { type: "json_object" },
+      temperature: 0.2,
+      max_tokens: 600,
+    },
+    { signal: AbortSignal.timeout(30_000) },
+  );
 
   const raw = completion.choices?.[0]?.message?.content ?? "{}";
   const parsed = JSON.parse(raw);

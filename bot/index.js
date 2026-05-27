@@ -1,6 +1,7 @@
 import "dotenv/config";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { randomUUID, randomBytes } from "node:crypto";
 import express from "express";
 import { Bot, InlineKeyboard } from "grammy";
 
@@ -68,7 +69,9 @@ function recordGrade(userId) {
 }
 
 function setSession(id, payload) {
-  sessions.set(id, { payload, expiresAt: Date.now() + SESSION_TTL_MS });
+  const secret = randomBytes(16).toString('hex');
+  sessions.set(id, { payload: { ...payload, _secret: secret }, expiresAt: Date.now() + SESSION_TTL_MS });
+  return secret; // callers that need it can use it
 }
 function getSession(id) {
   const e = sessions.get(id);
@@ -344,7 +347,7 @@ bot.callbackQuery(/^pick:(\d+)$/, async (ctx) => {
       );
       return;
     }
-    const sessionId = `${ctx.from.id}:${Date.now()}`;
+    const sessionId = randomUUID();
     if (!canUserGrade(ctx.from.id)) {
       await bot.api.editMessageText(
         ctx.chat.id, loading.message_id,
@@ -408,7 +411,7 @@ bot.callbackQuery(/^pick:(\d+)$/, async (ctx) => {
     return;
   }
 
-  const sessionId = `${ctx.from.id}:${Date.now()}`;
+  const sessionId = randomUUID();
   if (!canUserGrade(ctx.from.id)) {
     await bot.api.editMessageText(
       ctx.chat.id, loading.message_id,
@@ -596,8 +599,11 @@ bot.callbackQuery(/^confirm:(.+)$/, async (ctx) => {
       });
     });
   } catch (err) {
-    await ctx.reply(`Grading failed — ${esc(err.message)}.`, { parse_mode: "HTML" });
-    console.error("[bot] grade failed:", err);
+    const safeMsg = /rate.?limit|quota/i.test(err.message) ? "Groq rate limit reached — try again shortly."
+      : /timeout|timed.?out/i.test(err.message) ? "Grading timed out — try again."
+      : "Grading failed. Try again or contact the operator.";
+    await ctx.reply(`⚠️ ${safeMsg}`, { parse_mode: "HTML" });
+    console.error("[bot] grade failed (full error):", err);
   }
 });
 
@@ -696,6 +702,7 @@ bot.callbackQuery(/^admin:toggle:(.+)$/, async (ctx) => {
   const current = settings.getBool(key, key === "bypass" ? config.x402.bypass : false);
   try {
     await settings.set(key, String(!current));
+    console.log(JSON.stringify({ event: "admin_setting_change", key, from: current, to: !current, adminId: ctx.from.id, ts: new Date().toISOString() }));
     await ctx.answerCallbackQuery(`${key} → ${!current ? "ON" : "OFF"}`);
   } catch {
     await ctx.answerCallbackQuery("DB error — change applied in-memory only");
@@ -849,6 +856,7 @@ bot.on("message:text", async (ctx) => {
 
     try {
       await settings.set(field, value);
+      console.log(JSON.stringify({ event: "admin_setting_change", key: field, to: value, adminId: ctx.from.id, ts: new Date().toISOString() }));
     } catch {
       await ctx.reply("⚠️ DB error — change applied in-memory only (won't survive restart).");
     }
@@ -871,7 +879,7 @@ bot.on("message:text", async (ctx) => {
     await ctx.reply(`I didn't understand that. Pick an action:`, { reply_markup: kb });
     return;
   }
-  const sessionId = `${ctx.from.id}:${Date.now()}`;
+  const sessionId = randomUUID();
   if (!canUserGrade(ctx.from.id)) {
     await ctx.reply("⏳ Too many grading requests this hour. Try again in a bit.");
     return;
@@ -906,12 +914,18 @@ bot.catch((err) => console.error("[bot] error:", err));
 
 const http = express();
 http.use((req, res, next) => {
-  res.header("Access-Control-Allow-Origin", "*");
+  try {
+    const allowedOrigin = MINIAPP_URL ? new URL(MINIAPP_URL).origin : null;
+    if (allowedOrigin) res.header("Access-Control-Allow-Origin", allowedOrigin);
+  } catch {
+    // MINIAPP_URL is malformed — skip CORS header
+  }
   res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Content-Type");
+  res.header("Access-Control-Allow-Headers", "Content-Type, X-Session-Secret");
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
+http.use(express.json({ limit: "32kb" }));
 http.get("/", (_req, res) => res.json({ ok: true, service: "bot+api" }));
 
 // Serve the Telegram Mini App at /app (e.g. /app/index.html, /app/app.js).
@@ -937,12 +951,12 @@ http.get("/session/:id", (req, res) => {
     task: payload.task ?? null,
     price: settings.get("price", config.pricing.full),
     bot_username: botUsername || null,
+    session_secret: payload._secret ?? null,
   });
 });
 
 // Mini App opened via inline keyboard can't use tg.sendData() — it POSTs the
 // verdict here instead, and we forward it to the user's chat as a message.
-http.use(express.json({ limit: "32kb" }));
 http.post("/verdict/:sessionId", async (req, res) => {
   try {
     const sessionId = req.params.sessionId;
@@ -950,7 +964,17 @@ http.post("/verdict/:sessionId", async (req, res) => {
     if (!payload) return res.status(404).json({ error: "session_not_found" });
     const userId = payload.userId;
     if (!userId) return res.status(400).json({ error: "session_has_no_user" });
+
+    const providedSecret = req.headers['x-session-secret'] ?? req.body?._secret;
+    if (!payload._secret || !providedSecret || providedSecret !== payload._secret) {
+      return res.status(403).json({ error: "invalid_session_secret" });
+    }
+
     const verdict = req.body;
+    const VALID_VERDICTS = ["approve", "review", "reject"];
+    if (!verdict || !VALID_VERDICTS.includes(verdict.verdict)) {
+      return res.status(400).json({ error: "invalid_verdict_payload" });
+    }
 
     // Build the `task` object the action flow needs. We re-fetch the task
     // from 0xwork so discountedFee reflects current on-chain state, but
@@ -996,12 +1020,20 @@ http.post("/action-result/:sessionId", async (req, res) => {
     const userId = payload.userId;
     if (!userId) return res.status(400).json({ error: "session_has_no_user" });
 
+    const providedSecret = req.headers['x-session-secret'] ?? req.body?._secret;
+    if (!payload._secret || !providedSecret || providedSecret !== payload._secret) {
+      return res.status(403).json({ error: "invalid_session_secret" });
+    }
+
     const { action, taskId, txHash } = req.body ?? {};
     if (action !== "approve" && action !== "dispute") {
       return res.status(400).json({ error: "bad_action" });
     }
     if (!txHash || typeof txHash !== "string") {
       return res.status(400).json({ error: "missing_tx_hash" });
+    }
+    if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
+      return res.status(400).json({ error: "invalid_tx_hash" });
     }
 
     const message = renderActionResult({ action, taskId, txHash, payload });
@@ -1055,6 +1087,9 @@ http.listen(BOT_PORT, () => {
   console.log(`[server] listening on :${BOT_PORT} (bot + api)`);
   logApiStartupNotes();
 });
+if (!config.admin.telegramId) {
+  console.warn("[bot] ADMIN_TELEGRAM_ID not set — /admin command disabled");
+}
 
 await registerCommands().catch((e) => console.warn("[bot] setMyCommands failed:", e.message));
 

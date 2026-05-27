@@ -11,6 +11,12 @@ export function createApiApp() {
   // Render sits behind a reverse proxy — trust the first hop so req.ip
   // reflects the real client IP from X-Forwarded-For, not the proxy address.
   app.set("trust proxy", 1);
+  app.use((req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    next();
+  });
   app.use(express.json({ limit: "1mb" }));
 
   app.use("/healthz", healthRoute);

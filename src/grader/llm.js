@@ -15,16 +15,19 @@ export async function llmGrade({ task_type, requirements, submission, heuristics
   if (!config.groq.enabled) {
     throw new Error("Groq disabled (no GROQ_API_KEY)");
   }
-  const completion = await client().chat.completions.create({
-    model: settings.get("groq_model", config.groq.model),
-    messages: [
-      { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: buildUserMessage({ task_type, requirements, submission, heuristics }) },
-    ],
-    response_format: { type: "json_object" },
-    temperature: 0.2,
-    max_tokens: 600,
-  });
+  const completion = await client().chat.completions.create(
+    {
+      model: settings.get("groq_model", config.groq.model),
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: buildUserMessage({ task_type, requirements, submission, heuristics }) },
+      ],
+      response_format: { type: "json_object" },
+      temperature: 0.2,
+      max_tokens: 600,
+    },
+    { signal: AbortSignal.timeout(30_000) },
+  );
   const raw = completion.choices?.[0]?.message?.content ?? "{}";
   const parsed = JSON.parse(raw);
   return {
