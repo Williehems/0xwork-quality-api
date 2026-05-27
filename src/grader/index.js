@@ -95,6 +95,10 @@ function heuristicVerdict(h) {
     if ((h.research_issues ?? []).includes("no_citations")) return "reject";
     if ((h.research_issues ?? []).length) return "review";
   }
+  if (h.category === "data") {
+    if ((h.issues ?? []).includes("json_parse_failed") || (h.issues ?? []).includes("very_few_rows")) return "reject";
+    if ((h.issues ?? []).includes("format_mismatch")) return "review";
+  }
   // uniform_sentence_length is passed as evidence to the LLM which treats it
   // as a concern, not an auto-reject. Don't escalate it in the heuristic
   // verdict — let the LLM decide based on the full context.

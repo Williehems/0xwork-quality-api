@@ -62,5 +62,9 @@ export function dataHeuristics({ submission, requirements }) {
   }
 
   // Prose / markdown report — fall back to writing heuristics for the body.
-  return { format, ...writingHeuristics({ submission, requirements }) };
+  // Flag format_mismatch if the task description implies structured data was expected.
+  const notesLower = (requirements.notes ?? requirements.title ?? "").toLowerCase();
+  const structuredExpected = /\b(csv|json|table|spreadsheet|dataset|rows?|columns?|structured)\b/.test(notesLower);
+  const issues = structuredExpected ? ["format_mismatch"] : [];
+  return { format, issues, ...writingHeuristics({ submission, requirements }) };
 }

@@ -39,9 +39,12 @@ function sentenceStructure(sents) {
   const stdev = Math.sqrt(variance);
   const cv = mean === 0 ? 0 : stdev / mean;
   const issues = [];
-  if (cv < 0.2) issues.push("uniform_sentence_length");
+  if (cv < 0.25) issues.push("uniform_sentence_length");
   if (mean > 35) issues.push("very_long_sentences");
   if (mean < 6) issues.push("very_short_sentences");
+  // Both uniform length AND short mean sentence length together is a strong
+  // signal of low-effort template or AI-generated filler text.
+  if (cv < 0.25 && mean < 9) issues.push("repetitive_structure");
   return {
     sentence_count: sents.length,
     mean_length: Number(mean.toFixed(1)),

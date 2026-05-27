@@ -17,7 +17,9 @@ export function socialHeuristics({ submission, requirements }) {
   const issues = [];
   if (overLimit) issues.push(`over_char_limit:${chars}/${limit}`);
   if (hashtags.length === 0) issues.push("no_hashtags");
-  if (lineCount === 1 && chars < 80) issues.push("very_short_post");
+  // Only flag very_short_post when it's both short AND has no hashtags —
+  // a short post with hashtags and good topic coverage is a valid tweet.
+  if (lineCount === 1 && chars < 50 && hashtags.length === 0) issues.push("very_short_post");
 
   return {
     character_count: { submitted: chars, limit, pass: !overLimit },

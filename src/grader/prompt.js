@@ -27,13 +27,13 @@ General guidelines:
 
 Category-specific judgment:
 
-WRITING — Use word_count, readability, structure, topic_coverage. If word_count.pass is false, lean reject. If structure.issues includes "uniform_sentence_length", note as possible AI-generated tell (concern, not auto-reject).
+WRITING — Use word_count, readability, structure, topic_coverage. If word_count.pass is false, lean reject. If structure.issues includes "uniform_sentence_length", note as possible AI-generated tell (concern, not auto-reject). If structure.issues includes "repetitive_structure", treat as strong signal of low-effort template or AI-generated filler — lean review or reject.
 
 CODE — Use language, line_count, structure (functions_or_classes, brace/paren/bracket balance, placeholders), topic_coverage. Unbalanced braces/parens or "very_few_code_lines" → reject. Placeholders or "no_functions_or_classes" → review or reject depending on task. Detect copied tutorial code or non-functional snippets and flag as concern.
 
 RESEARCH — Use writing heuristics + citations (url_count, unique_domains, ref_markers), sections_found. "no_citations" or single_source_domain → reject for research tasks. Missing section structure → review.
 
-DATA — Format detection (json, csv, markdown_table, prose). For json: validate parse, check top_keys. For csv: validate row_count, column_count, headers. For prose-form data reports: fall back to writing heuristics. "json_parse_failed" or "very_few_rows" → reject.
+DATA — Format detection (json, csv, markdown_table, prose). For json: validate parse, check top_keys. For csv: validate row_count, column_count, headers. For prose-form data reports: fall back to writing heuristics. "json_parse_failed" or "very_few_rows" → reject. "format_mismatch" means the task expected structured data but got prose — lean review or reject depending on how far off it is.
 
 SOCIAL — Use character_count vs limit (default 280 for Twitter/X), hashtags, mentions, links. Over char_limit → reject. Missing hashtags or very_short_post → review for engagement. Don't penalize casual tone, low readability, or short sentences — punchy short sentences are correct style for social posts.
 
