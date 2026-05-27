@@ -44,4 +44,11 @@ export const config = {
   pricing: {
     full: optional("PRICE_FULL_USDC", "0.10"),
   },
+
+  rateLimit: {
+    checkWindowMs: num("RATE_LIMIT_CHECK_WINDOW_MS", 15 * 60 * 1000),
+    checkMax:      num("RATE_LIMIT_CHECK_MAX", 10),
+    botWindowMs:   num("RATE_LIMIT_BOT_WINDOW_MS", 60 * 60 * 1000),
+    botMax:        num("RATE_LIMIT_BOT_MAX", 8),
+  },
 };

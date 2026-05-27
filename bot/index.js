@@ -9,6 +9,7 @@ import { listInReviewByPoster, getTaskById, getSubmission } from "../src/zerox/c
 import { inferRubric } from "../src/rubric/index.js";
 import { createApiApp, logApiStartupNotes } from "../src/app.js";
 import { isVideoPlatformUrl } from "../src/grader/video.js";
+import { config } from "../src/config.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -48,6 +49,20 @@ let botUsername = "";
 const sessions = new Map();
 /** userState: tg_user_id → { kind, ...details, expiresAt } */
 const userState = new Map();
+/** userGradeTimes: tg_user_id → timestamps[] of recent grading sessions */
+const userGradeTimes = new Map();
+
+function canUserGrade(userId) {
+  const cutoff = Date.now() - config.rateLimit.botWindowMs;
+  const times  = (userGradeTimes.get(userId) ?? []).filter(t => t > cutoff);
+  userGradeTimes.set(userId, times);
+  return times.length < config.rateLimit.botMax;
+}
+function recordGrade(userId) {
+  const times = userGradeTimes.get(userId) ?? [];
+  times.push(Date.now());
+  userGradeTimes.set(userId, times);
+}
 
 function setSession(id, payload) {
   sessions.set(id, { payload, expiresAt: Date.now() + SESSION_TTL_MS });
@@ -81,6 +96,12 @@ setInterval(() => {
   const now = Date.now();
   for (const [id, e] of sessions) if (e.expiresAt < now) sessions.delete(id);
   for (const [id, s] of userState) if (s.expiresAt < now) userState.delete(id);
+  const rateCutoff = now - config.rateLimit.botWindowMs;
+  for (const [id, times] of userGradeTimes) {
+    const pruned = times.filter(t => t > rateCutoff);
+    if (pruned.length === 0) userGradeTimes.delete(id);
+    else userGradeTimes.set(id, pruned);
+  }
 }, 5 * 60 * 1000).unref?.();
 
 // ── Bot commands menu ───────────────────────────────────────────────────
@@ -321,6 +342,13 @@ bot.callbackQuery(/^pick:(\d+)$/, async (ctx) => {
       return;
     }
     const sessionId = `${ctx.from.id}:${Date.now()}`;
+    if (!canUserGrade(ctx.from.id)) {
+      await bot.api.editMessageText(
+        ctx.chat.id, loading.message_id,
+        "⏳ You've submitted too many grading requests this hour. Wait a bit before trying again.",
+      );
+      return;
+    }
     setSession(sessionId, {
       task_type: taskType,
       tier: "full",
@@ -348,6 +376,7 @@ bot.callbackQuery(/^pick:(\d+)$/, async (ctx) => {
       renderRubricConfirm(task, rubric, null, "video", null),
       { parse_mode: "HTML", reply_markup: rubricKeyboard(sessionId) },
     );
+    recordGrade(ctx.from.id);
     return;
   }
 
@@ -377,6 +406,13 @@ bot.callbackQuery(/^pick:(\d+)$/, async (ctx) => {
   }
 
   const sessionId = `${ctx.from.id}:${Date.now()}`;
+  if (!canUserGrade(ctx.from.id)) {
+    await bot.api.editMessageText(
+      ctx.chat.id, loading.message_id,
+      "⏳ You've submitted too many grading requests this hour. Wait a bit before trying again.",
+    );
+    return;
+  }
   const baseSession = {
     task_type: taskType,
     tier: "full",
@@ -411,6 +447,7 @@ bot.callbackQuery(/^pick:(\d+)$/, async (ctx) => {
     messageId: loading.message_id,
   };
   setSession(sessionId, baseSession);
+  recordGrade(ctx.from.id);
 
   if (fetchResult.kind === "content") {
     const wordCount = fetchResult.text.split(/\s+/).filter(Boolean).length;
@@ -684,7 +721,12 @@ bot.on("message:text", async (ctx) => {
     return;
   }
   const sessionId = `${ctx.from.id}:${Date.now()}`;
+  if (!canUserGrade(ctx.from.id)) {
+    await ctx.reply("⏳ Too many grading requests this hour. Try again in a bit.");
+    return;
+  }
   setSession(sessionId, { ...parsed, userId: ctx.from.id, meta: { source: "manual" } });
+  recordGrade(ctx.from.id);
   await ctx.reply(
     `📝 <b>${esc(parsed.requirements.title)}</b>\nWord count: ${parsed.requirements.word_count ?? "any"}`,
     { parse_mode: "HTML", reply_markup: rubricKeyboard(sessionId) },

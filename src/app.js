@@ -1,4 +1,5 @@
 import express from "express";
+import rateLimit from "express-rate-limit";
 import { config } from "./config.js";
 import { checkRoute } from "./routes/check.js";
 import { healthRoute } from "./routes/health.js";
@@ -6,7 +7,22 @@ import { mountX402 } from "./middleware/x402.js";
 
 export function createApiApp() {
   const app = express();
+  // Render sits behind a reverse proxy — trust the first hop so req.ip
+  // reflects the real client IP from X-Forwarded-For, not the proxy address.
+  app.set("trust proxy", 1);
   app.use(express.json({ limit: "1mb" }));
+
+  app.use("/healthz", healthRoute);
+
+  // Rate-limit /check before x402 verifies payment, so abusive requests
+  // don't consume Groq quota or CDP verification calls.
+  app.use("/check", rateLimit({
+    windowMs: config.rateLimit.checkWindowMs,
+    max: config.rateLimit.checkMax,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "rate_limited", message: "Too many grading requests — try again later." },
+  }));
 
   app.use("/healthz", healthRoute);
 
