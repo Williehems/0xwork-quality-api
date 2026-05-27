@@ -41,6 +41,8 @@ function extractTweetText(html) {
 
 // Best-effort thumbnail extraction via og:image meta tag.
 // Twitterbot UA bypasses the login redirect that normal crawlers get.
+// Only accepts actual video thumbnail URLs — profile pictures and static
+// Twitter assets are excluded so has_visual doesn't false-positive on text tweets.
 async function tryGetThumbnail(tweetUrl) {
   try {
     const res = await fetch(tweetUrl, {
@@ -53,7 +55,12 @@ async function tryGetThumbnail(tweetUrl) {
       html.match(/<meta[^>]+property="og:image"[^>]+content="([^"]+)"/i) ||
       html.match(/<meta[^>]+content="([^"]+)"[^>]+property="og:image"/i);
     const url = m?.[1];
-    return url && !url.includes("abs.twimg.com/sticky") ? url : null;
+    if (!url) return null;
+    // Accept only video/media thumbnails; reject profile pictures and Twitter branding.
+    const isVideoThumb = url.includes("pbs.twimg.com/ext_tw_video_thumb/") ||
+                         url.includes("pbs.twimg.com/tweet_video_thumb/")  ||
+                         url.includes("pbs.twimg.com/media/");
+    return isVideoThumb ? url : null;
   } catch {
     return null;
   }
