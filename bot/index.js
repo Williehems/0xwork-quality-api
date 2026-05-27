@@ -51,6 +51,8 @@ let botUsername = "";
 const sessions = new Map();
 /** userState: tg_user_id → { kind, ...details, expiresAt } */
 const userState = new Map();
+/** seenInbox: tg_user_ids who have opened inbox at least once (onboarding signal) */
+const seenInbox = new Set();
 /** userGradeTimes: tg_user_id → timestamps[] of recent grading sessions */
 const userGradeTimes = new Map();
 
@@ -146,8 +148,36 @@ async function sendHome(ctx) {
 
 bot.command("start", async (ctx) => {
   clearState(ctx.from.id);
-  await sendHome(ctx);
+  const w = await getWallet(ctx.from.id);
+  if (!w?.wallet) {
+    await sendOnboarding(ctx);
+  } else {
+    await sendHome(ctx);
+  }
 });
+
+async function sendOnboarding(ctx) {
+  const name = ctx.from.first_name ? esc(ctx.from.first_name) : "there";
+  await ctx.reply(
+    `⚖️ <b>Welcome to Gavel</b>\n\n` +
+    `Hey ${name}! Gavel grades 0xWork submissions using AI, then lets you approve or dispute them on-chain — all without leaving Telegram.\n\n` +
+    `Let's get you set up in 3 steps.`,
+    { parse_mode: "HTML" },
+  );
+  // Small delay so the intro lands before step 1
+  await new Promise(r => setTimeout(r, 600));
+  await ctx.reply(
+    `<b>Step 1 of 3 — Bind your wallet</b>\n\n` +
+    `Gavel needs your 0xWork poster wallet to fetch your inbox and sign approve/dispute transactions.\n\n` +
+    `Tap below to bind it now.`,
+    {
+      parse_mode: "HTML",
+      reply_markup: new InlineKeyboard()
+        .text("👛 Bind wallet", "go:wallet")
+        .text("Skip for now →", "onboard:skip"),
+    },
+  );
+}
 
 bot.callbackQuery("go:home", async (ctx) => {
   await ctx.answerCallbackQuery();
@@ -169,7 +199,48 @@ bot.callbackQuery("go:help", async (ctx) => {
   await sendHelp(ctx);
 });
 
-// ── /help ───────────────────────────────────────────────────────────────
+// ── Onboarding callbacks ─────────────────────────────────────────────────
+
+bot.callbackQuery("onboard:skip", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await sendHome(ctx);
+});
+
+// After wallet is bound during onboarding, nudge toward inbox (step 2).
+// This fires from the normal wallet-bind success path — we detect onboarding
+// context by checking whether the user has ever opened their inbox (no wallet
+// was set before this bind, so this is their first session).
+async function sendOnboardStep2(ctx) {
+  await ctx.reply(
+    `<b>Step 2 of 3 — Open your inbox</b>\n\n` +
+    `Your inbox shows all submissions waiting for your review. Gavel fetches each one from 0xWork and infers a grading rubric automatically.\n\n` +
+    `Tap below to see your submissions.`,
+    {
+      parse_mode: "HTML",
+      reply_markup: new InlineKeyboard()
+        .text("📥 Open inbox", "go:inbox")
+        .text("🏠 Home", "go:home"),
+    },
+  );
+}
+
+async function sendOnboardStep3(ctx) {
+  await ctx.reply(
+    `<b>Step 3 of 3 — Grade a submission</b>\n\n` +
+    `Tap any submission in your inbox. Gavel will:\n` +
+    `• Fetch the proof and infer a rubric\n` +
+    `• Ask you to confirm before grading\n` +
+    `• Return a verdict with evidence and reasoning\n\n` +
+    `After grading, you can <b>✅ Approve</b> or <b>⚠️ Dispute</b> directly in chat — one tap signs the on-chain transaction.\n\n` +
+    `You're all set. Open your inbox to start.`,
+    {
+      parse_mode: "HTML",
+      reply_markup: new InlineKeyboard()
+        .text("📥 Open inbox", "go:inbox")
+        .text("❓ How it works", "go:help"),
+    },
+  );
+}
 
 async function sendHelp(ctx) {
   const kb = new InlineKeyboard().text("📥 Inbox", "go:inbox").text("🏠 Home", "go:home");
@@ -208,13 +279,20 @@ async function sendWalletPrompt(ctx) {
 }
 
 async function bindWallet(ctx, address) {
+  const wasNew = !(await getWallet(ctx.from.id))?.wallet;
   await setWallet({ tgUserId: ctx.from.id, tgUsername: ctx.from.username, wallet: address });
   clearState(ctx.from.id);
-  const kb = new InlineKeyboard().text("📥 Open Inbox", "go:inbox").text("🏠 Home", "go:home");
   await ctx.reply(
     `✅ Wallet bound: <code>${esc(address)}</code>`,
-    { parse_mode: "HTML", reply_markup: kb },
+    { parse_mode: "HTML" },
   );
+  if (wasNew) {
+    await new Promise(r => setTimeout(r, 400));
+    await sendOnboardStep2(ctx);
+  } else {
+    const kb = new InlineKeyboard().text("📥 Open Inbox", "go:inbox").text("🏠 Home", "go:home");
+    await ctx.reply(`What would you like to do next?`, { reply_markup: kb });
+  }
 }
 
 bot.command("wallet", async (ctx) => {
@@ -245,7 +323,8 @@ bot.command("wallet", async (ctx) => {
 // ── /inbox ──────────────────────────────────────────────────────────────
 
 async function sendInbox(ctx) {
-  const w = await getWallet(ctx.from.id);
+  const userId = ctx.from.id;
+  const w = await getWallet(userId);
   if (!w?.wallet) {
     const kb = new InlineKeyboard().text("👛 Bind wallet", "go:wallet");
     await ctx.reply(
@@ -254,6 +333,8 @@ async function sendInbox(ctx) {
     );
     return;
   }
+  const firstInbox = !seenInbox.has(userId);
+  seenInbox.add(userId);
   const loading = await ctx.reply(`⏳ Fetching your in-review submissions…`);
   let tasks;
   try {
@@ -289,6 +370,10 @@ async function sendInbox(ctx) {
       lines.join("\n"),
     { parse_mode: "HTML", reply_markup: kb },
   );
+  if (firstInbox) {
+    await new Promise(r => setTimeout(r, 500));
+    await sendOnboardStep3(ctx);
+  }
 }
 
 bot.command("inbox", async (ctx) => {
