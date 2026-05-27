@@ -4,6 +4,7 @@ import { config } from "./config.js";
 import { checkRoute } from "./routes/check.js";
 import { healthRoute } from "./routes/health.js";
 import { mountX402 } from "./middleware/x402.js";
+import * as settings from "./settings.js";
 
 export function createApiApp() {
   const app = express();
@@ -14,17 +15,27 @@ export function createApiApp() {
 
   app.use("/healthz", healthRoute);
 
+  // Maintenance gate — admin can flip this without a redeploy.
+  app.use("/check", (req, res, next) => {
+    if (settings.getBool("maintenance", false)) {
+      return res.status(503).json({
+        error: "maintenance",
+        message: "Grading is temporarily paused. Check back soon.",
+      });
+    }
+    next();
+  });
+
   // Rate-limit /check before x402 verifies payment, so abusive requests
   // don't consume Groq quota or CDP verification calls.
+  // max is a function so the admin can change it at runtime via /admin.
   app.use("/check", rateLimit({
     windowMs: config.rateLimit.checkWindowMs,
-    max: config.rateLimit.checkMax,
+    max: (req) => settings.getNum("rate_api_max", config.rateLimit.checkMax),
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: "rate_limited", message: "Too many grading requests — try again later." },
   }));
-
-  app.use("/healthz", healthRoute);
 
   mountX402(app);
   app.post("/check", checkRoute);

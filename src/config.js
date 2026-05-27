@@ -51,4 +51,8 @@ export const config = {
     botWindowMs:   num("RATE_LIMIT_BOT_WINDOW_MS", 60 * 60 * 1000),
     botMax:        num("RATE_LIMIT_BOT_MAX", 8),
   },
+
+  admin: {
+    telegramId: optional("ADMIN_TELEGRAM_ID", ""),
+  },
 };

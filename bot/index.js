@@ -10,6 +10,7 @@ import { inferRubric } from "../src/rubric/index.js";
 import { createApiApp, logApiStartupNotes } from "../src/app.js";
 import { isVideoPlatformUrl } from "../src/grader/video.js";
 import { config } from "../src/config.js";
+import * as settings from "../src/settings.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -53,10 +54,12 @@ const userState = new Map();
 const userGradeTimes = new Map();
 
 function canUserGrade(userId) {
-  const cutoff = Date.now() - config.rateLimit.botWindowMs;
-  const times  = (userGradeTimes.get(userId) ?? []).filter(t => t > cutoff);
+  const windowMs = settings.getNum("rate_bot_window_ms", config.rateLimit.botWindowMs);
+  const max      = settings.getNum("rate_bot_max", config.rateLimit.botMax);
+  const cutoff   = Date.now() - windowMs;
+  const times    = (userGradeTimes.get(userId) ?? []).filter(t => t > cutoff);
   userGradeTimes.set(userId, times);
-  return times.length < config.rateLimit.botMax;
+  return times.length < max;
 }
 function recordGrade(userId) {
   const times = userGradeTimes.get(userId) ?? [];
@@ -634,6 +637,113 @@ bot.callbackQuery("go:manual", async (ctx) => {
   await sendManualPrompt(ctx);
 });
 
+// ── Admin panel ─────────────────────────────────────────────────────────────
+
+function isAdmin(ctx) {
+  const adminId = config.admin.telegramId;
+  return adminId && String(ctx.from?.id) === String(adminId);
+}
+
+function renderAdminPanel() {
+  const bypass      = settings.getBool("bypass", config.x402.bypass);
+  const price       = settings.get("price", config.pricing.full);
+  const rateApiMax  = settings.getNum("rate_api_max", config.rateLimit.checkMax);
+  const rateApiWin  = Math.round(
+    settings.getNum("rate_api_window_min", config.rateLimit.checkWindowMs / 60000)
+  );
+  const rateBotMax  = settings.getNum("rate_bot_max", config.rateLimit.botMax);
+  const model       = settings.get("groq_model", config.groq.model);
+  const maintenance = settings.getBool("maintenance", false);
+  const dbOk        = settings.isDbAvailable();
+
+  const text =
+    `⚙️ <b>Gavel Admin Panel</b>${dbOk ? "" : " ⚠️ <i>(DB unavailable — changes won't persist)</i>"}\n\n` +
+    `💰 <b>Payments</b>\n` +
+    `  Price: <code>${price} USDC</code>\n` +
+    `  Bypass: <b>${bypass ? "ON ✅" : "OFF"}</b>\n\n` +
+    `⚡ <b>Rate Limits</b>\n` +
+    `  API: <code>${rateApiMax}</code> per <code>${rateApiWin}</code> min\n` +
+    `  Bot: <code>${rateBotMax}</code> per hour\n\n` +
+    `🤖 <b>Grading</b>\n` +
+    `  Model: <code>${model}</code>\n\n` +
+    `${maintenance ? "🔴" : "🟢"} Maintenance: <b>${maintenance ? "ON" : "OFF"}</b>`;
+
+  const kb = new InlineKeyboard()
+    .text("💰 Set price",     "admin:edit:price")
+    .text(bypass ? "🔄 Bypass ON→OFF" : "🔄 Bypass OFF→ON", "admin:toggle:bypass")
+    .row()
+    .text("⚡ API limit",     "admin:edit:rate_api_max")
+    .text("⚡ Bot limit",     "admin:edit:rate_bot_max")
+    .row()
+    .text("🤖 Change model",  "admin:edit:groq_model")
+    .text(maintenance ? "🟢 Maint. ON→OFF" : "🔴 Maint. OFF→ON", "admin:toggle:maintenance")
+    .row()
+    .text("↩ Close",          "admin:close");
+
+  return { text, kb };
+}
+
+bot.command("admin", async (ctx) => {
+  if (!isAdmin(ctx)) return;
+  const { text, kb } = renderAdminPanel();
+  await ctx.reply(text, { parse_mode: "HTML", reply_markup: kb });
+});
+
+// Toggle callbacks (bypass, maintenance)
+bot.callbackQuery(/^admin:toggle:(.+)$/, async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.answerCallbackQuery();
+  const key = ctx.match[1];
+  const current = settings.getBool(key, key === "bypass" ? config.x402.bypass : false);
+  try {
+    await settings.set(key, String(!current));
+    await ctx.answerCallbackQuery(`${key} → ${!current ? "ON" : "OFF"}`);
+  } catch {
+    await ctx.answerCallbackQuery("DB error — change applied in-memory only");
+    // In-memory already updated by settings.set even if DB write failed
+  }
+  const { text, kb } = renderAdminPanel();
+  await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: kb });
+});
+
+// Edit callbacks — prompt for a new value
+const ADMIN_EDIT_LABELS = {
+  price:        "Grade price in USDC (e.g. 0.10)",
+  rate_api_max: "API rate limit — max requests per window (integer)",
+  rate_bot_max: "Bot rate limit — max grades per hour per user (integer)",
+  groq_model:   "Groq model name (e.g. llama-3.3-70b-versatile)",
+};
+bot.callbackQuery(/^admin:edit:(.+)$/, async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.answerCallbackQuery();
+  const field = ctx.match[1];
+  const label = ADMIN_EDIT_LABELS[field] ?? field;
+  setState(ctx.from.id, {
+    kind: "admin_edit",
+    field,
+    chatId: ctx.chat.id,
+    messageId: ctx.msg?.message_id,
+    expiresAt: Date.now() + STATE_TTL_MS,
+  });
+  await ctx.answerCallbackQuery();
+  await ctx.editMessageText(
+    `✏️ <b>Edit: ${label}</b>\n\nSend the new value (or /cancel to abort):`,
+    { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("✖ Cancel", "admin:cancel_edit") },
+  );
+});
+
+bot.callbackQuery("admin:cancel_edit", async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.answerCallbackQuery();
+  clearState(ctx.from.id);
+  await ctx.answerCallbackQuery("Cancelled");
+  const { text, kb } = renderAdminPanel();
+  await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: kb });
+});
+
+bot.callbackQuery("admin:close", async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery();
+  await ctx.deleteMessage().catch(() => {});
+});
+
 bot.command("manual", async (ctx) => {
   await sendManualPrompt(ctx);
 });
@@ -710,6 +820,47 @@ bot.on("message:text", async (ctx) => {
       `✏️ <b>Rubric updated</b>\n\n${renderRubricSummary(newReqs)}`,
       { parse_mode: "HTML", reply_markup: rubricKeyboard(state.sessionId) },
     );
+    return;
+  }
+
+  // Admin field edit
+  if (state?.kind === "admin_edit" && isAdmin(ctx)) {
+    const { field, chatId, messageId } = state;
+    clearState(ctx.from.id);
+    const label = field.replace(/_/g, " ");
+
+    // Validate by type
+    let value = text.trim();
+    if (field === "price") {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n <= 0) {
+        await ctx.reply("Invalid price — enter a positive number like 0.10.", { parse_mode: "HTML" });
+        return;
+      }
+      value = n.toFixed(4).replace(/\.?0+$/, "");
+    } else if (field === "rate_api_max" || field === "rate_bot_max") {
+      const n = parseInt(value, 10);
+      if (!Number.isInteger(n) || n < 1) {
+        await ctx.reply("Invalid — enter a positive integer.", { parse_mode: "HTML" });
+        return;
+      }
+      value = String(n);
+    }
+
+    try {
+      await settings.set(field, value);
+    } catch {
+      await ctx.reply("⚠️ DB error — change applied in-memory only (won't survive restart).");
+    }
+
+    // Restore the panel in the original message
+    const { text: panelText, kb } = renderAdminPanel();
+    if (chatId && messageId) {
+      await bot.api.editMessageText(chatId, messageId, panelText, {
+        parse_mode: "HTML", reply_markup: kb,
+      }).catch(() => {});
+    }
+    await ctx.reply(`✅ <b>${label}</b> set to <code>${esc(value)}</code>`, { parse_mode: "HTML" });
     return;
   }
 
@@ -895,6 +1046,9 @@ function renderActionResult({ action, taskId, txHash, payload }) {
 
 // Mount the API (/healthz, /check) on the same server.
 http.use(createApiApp());
+
+// Load runtime settings from DB before the server handles any requests.
+await settings.loadSettings();
 
 http.listen(BOT_PORT, () => {
   console.log(`[server] listening on :${BOT_PORT} (bot + api)`);

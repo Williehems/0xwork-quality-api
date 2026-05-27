@@ -43,3 +43,18 @@ export async function getWallet(tgUserId) {
 export async function deleteWallet(tgUserId) {
   await pool().query(`DELETE FROM wallet_bindings WHERE tg_user_id = $1`, [tgUserId]);
 }
+
+export async function getRuntimeSettings() {
+  const result = await pool().query(`SELECT key, value FROM runtime_settings ORDER BY key`);
+  return Object.fromEntries(result.rows.map(r => [r.key, r.value]));
+}
+
+export async function setRuntimeSetting(key, value) {
+  await pool().query(
+    `INSERT INTO runtime_settings (key, value, updated_at)
+     VALUES ($1, $2, NOW())
+     ON CONFLICT (key) DO UPDATE
+       SET value = EXCLUDED.value, updated_at = NOW()`,
+    [key, String(value)],
+  );
+}
