@@ -108,6 +108,89 @@ export async function fetchVideoContent(submissionUrl) {
   }
 }
 
+// ─── Content-aware task type detection ────────────────────────────────────────
+
+const VIDEO_PLATFORM_HOSTNAMES = new Set([
+  "twitter.com", "x.com", "www.twitter.com", "www.x.com",
+  "youtube.com", "www.youtube.com", "youtu.be",
+  "tiktok.com", "www.tiktok.com", "vm.tiktok.com",
+  "vimeo.com", "www.vimeo.com",
+  "loom.com", "www.loom.com",
+]);
+
+export function isVideoPlatformUrl(raw) {
+  try {
+    return VIDEO_PLATFORM_HOSTNAMES.has(new URL(raw).hostname);
+  } catch { return false; }
+}
+
+function isYouTubeUrl(raw) {
+  try {
+    const { hostname } = new URL(raw);
+    return hostname === "youtube.com" || hostname === "www.youtube.com" || hostname === "youtu.be";
+  } catch { return false; }
+}
+
+function isGitHubUrl(raw) {
+  try {
+    const { hostname } = new URL(raw);
+    return hostname === "github.com" || hostname === "www.github.com" || hostname === "gist.github.com";
+  } catch { return false; }
+}
+
+function looksLikeUrl(s) {
+  return typeof s === "string" && /^https?:\/\//i.test(s.trim());
+}
+
+/**
+ * Detect the true task category from the submission content, using hintCategory
+ * (from 0xwork's label) only as a fallback when the URL gives no strong signal.
+ *
+ * Returns { category, videoData } so grade() can reuse the fetched tweet data
+ * without a second network round-trip.
+ */
+export async function detectCategoryFromSubmission(submission, hintCategory) {
+  const url = (submission ?? "").trim();
+
+  if (!looksLikeUrl(url)) {
+    // Plain text — trust the stated category.
+    return { category: hintCategory, videoData: null };
+  }
+
+  // YouTube → always video.
+  if (isYouTubeUrl(url)) {
+    return { category: "video", videoData: { platform: "youtube", tweetText: "", thumbnailUrls: [], fallbackText: "" } };
+  }
+
+  // Twitter/X → fetch and inspect.
+  if (isTwitterUrl(url)) {
+    const videoData = await fetchVideoContent(url);
+    if (videoData.thumbnailUrls.length > 0) {
+      // Has a video thumbnail — this is a video task regardless of label.
+      return { category: "video", videoData };
+    }
+    if (videoData.tweetText.length > 100) {
+      // Long tweet text — treat as writing (thread, essay, long-form).
+      return { category: "writing", videoData };
+    }
+    // Short tweet with no video — social post.
+    return { category: "social", videoData };
+  }
+
+  // GitHub → code.
+  if (isGitHubUrl(url)) {
+    return { category: "code", videoData: null };
+  }
+
+  // Other video platforms (TikTok, Vimeo, Loom) — video, no further fetch.
+  if (isVideoPlatformUrl(url)) {
+    return { category: "video", videoData: { platform: "unknown", tweetText: "", thumbnailUrls: [], fallbackText: "" } };
+  }
+
+  // Unknown URL — trust the hint.
+  return { category: hintCategory, videoData: null };
+}
+
 let _client = null;
 function groqClient() {
   if (!_client) _client = new Groq({ apiKey: config.groq.apiKey });

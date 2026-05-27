@@ -8,6 +8,7 @@ import { setWallet, getWallet } from "../db/index.js";
 import { listInReviewByPoster, getTaskById, getSubmission } from "../src/zerox/client.js";
 import { inferRubric } from "../src/rubric/index.js";
 import { createApiApp, logApiStartupNotes } from "../src/app.js";
+import { isVideoPlatformUrl } from "../src/grader/video.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -298,10 +299,12 @@ bot.callbackQuery(/^pick:(\d+)$/, async (ctx) => {
 
   const taskType = normalizeCategory(task.category);
 
-  // Video submissions are tweet/video URLs — the grader fetches content itself via
-  // oEmbed + vision. Skip the proof-content download step for video tasks; it would
-  // just scrape a JS-rendered Twitter page and return garbage text.
-  if (taskType === "video") {
+  // Video platform URLs (Twitter, YouTube, TikTok, Vimeo, Loom) are handled
+  // directly by the grader's content detector — skip fetchProofContent entirely.
+  // This applies regardless of the 0xwork category label: a task labelled
+  // "writing" or "social" whose proof URL is a tweet/video link should NOT have
+  // HTML text pre-extracted (Twitter is JS-rendered; text would be junk).
+  if (taskType === "video" || isVideoPlatformUrl(task.proofUrl)) {
     await bot.api.editMessageText(
       ctx.chat.id, loading.message_id,
       `📥 Loaded task #${taskId}\n🧠 Inferring rubric…`,

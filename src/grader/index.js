@@ -1,19 +1,26 @@
 import { runHeuristics, normalizeTaskType } from "./heuristics/index.js";
 import { llmGrade } from "./llm.js";
-import { fetchVideoContent, llmGradeVideo } from "./video.js";
+import { detectCategoryFromSubmission, llmGradeVideo } from "./video.js";
 import { config } from "../config.js";
 
 export async function grade({ task_type, tier, requirements, submission }) {
-  const category = normalizeTaskType(task_type);
+  const hintCategory = normalizeTaskType(task_type);
 
-  // Video submissions are URLs — fetch tweet content and optional thumbnail before
-  // running heuristics. All other categories work on pre-extracted text as before.
-  let videoData = null;
-  if (category === "video") {
-    videoData = await fetchVideoContent(submission);
-  }
+  // Detect actual content type from submission URL/content.
+  // For plain text the hint is returned unchanged; for known URLs (Twitter,
+  // YouTube, GitHub, etc.) the content is inspected to override the hint.
+  const { category, videoData } = await detectCategoryFromSubmission(submission, hintCategory);
 
-  const heuristics = runHeuristics({ task_type: category, submission, requirements, videoData });
+  // When detection fetched content from a URL (tweet text, page text), use that
+  // as the effective submission for text-based heuristics instead of the raw URL.
+  // For video tasks videoData is consumed directly; for social/writing tasks the
+  // tweet text replaces the URL so character counts, topic coverage, etc. are real.
+  const effectiveSubmission =
+    (videoData?.tweetText || videoData?.fallbackText) || submission;
+
+  const heuristics = runHeuristics({
+    task_type: category, submission: effectiveSubmission, requirements, videoData,
+  });
 
   if (tier === "fast" || !config.groq.enabled) {
     return {
@@ -30,7 +37,7 @@ export async function grade({ task_type, tier, requirements, submission }) {
   try {
     const llm = category === "video"
       ? await llmGradeVideo({ task_type: category, requirements, videoData, heuristics })
-      : await llmGrade({ task_type: category, requirements, submission, heuristics });
+      : await llmGrade({ task_type: category, requirements, submission: effectiveSubmission, heuristics });
 
     return {
       task_type: category,
