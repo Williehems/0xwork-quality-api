@@ -95,7 +95,9 @@ function heuristicVerdict(h) {
     if ((h.research_issues ?? []).includes("no_citations")) return "reject";
     if ((h.research_issues ?? []).length) return "review";
   }
-  if (h.structure?.issues?.includes("uniform_sentence_length")) return "review";
+  // uniform_sentence_length is passed as evidence to the LLM which treats it
+  // as a concern, not an auto-reject. Don't escalate it in the heuristic
+  // verdict — let the LLM decide based on the full context.
   if (h.topic_coverage?.score != null && h.topic_coverage.score < 0.8) return "review";
   return "approve";
 }

@@ -4,8 +4,11 @@ export const WORD_RE = /\b\w+\b/g;
 export const SENT_RE = /[^.!?]+[.!?]+/g;
 export const URL_RE = /https?:\/\/[^\s)<>"']+/gi;
 
+// Count words by splitting on whitespace — this treats hyphenated compounds
+// (e.g. "on-chain", "user-friendly") as single words, matching how humans
+// count them and how the task poster likely set any word_count requirement.
 export function words(text) {
-  return text.match(WORD_RE) ?? [];
+  return text.trim().split(/\s+/).filter(Boolean);
 }
 
 export function sentences(text) {
@@ -14,14 +17,13 @@ export function sentences(text) {
 
 export function wordCount(text, required) {
   const n = words(text).length;
-  return {
-    submitted: n,
-    required: required ?? null,
-    pass:
-      required == null
-        ? true
-        : n >= Math.floor(required * 0.9) && n <= Math.ceil(required * 1.5),
-  };
+  // When no word count is required, never penalise on count alone.
+  if (required == null) {
+    return { submitted: n, required: null, pass: true };
+  }
+  // Allow 10% under and 50% over the target.
+  const pass = n >= Math.floor(required * 0.9) && n <= Math.ceil(required * 1.5);
+  return { submitted: n, required, pass };
 }
 
 export function topicCoverage(text, keywords) {

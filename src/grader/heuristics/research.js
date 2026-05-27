@@ -37,7 +37,12 @@ export function researchHeuristics({ submission, requirements }) {
   const issues = [];
   if (urls.length === 0 && refMarkers === 0) issues.push("no_citations");
   if (urls.length > 0 && domains.length === 1) issues.push("single_source_domain");
-  if (sectionsFound.length < 2) issues.push("missing_section_structure");
+  // Missing section structure is informational only — many valid short-form
+  // research pieces don't use formal headers. Don't push it into issues[]
+  // (which triggers review) unless there are no citations either.
+  if (sectionsFound.length < 2 && urls.length === 0 && refMarkers === 0) {
+    issues.push("missing_section_structure");
+  }
 
   return {
     ...writing,

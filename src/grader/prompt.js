@@ -20,6 +20,7 @@ General guidelines:
 - "approve" — meets the requirements with no significant concerns. Poster can pay out.
 - "review" — passes most signals but has a notable concern that warrants a human eye.
 - "reject" — clearly fails one or more core requirements (off-topic, far below required length, low effort, copied template text, broken code, missing data fields).
+- IMPORTANT: Only penalise the submission for requirements that were actually set. If word_count is null, ignore word count. If topic_keywords is empty, ignore topic coverage. If notes is absent, don't invent criteria the poster didn't ask for.
 - Cite specific heuristic fields when relevant ("topic_coverage.missing includes X", "structure.brace_balance = -2").
 - If the submission contains a "[NOTE: ...]" preamble saying full content wasn't retrievable, lean "review" unless metadata clearly signals reject.
 - Be concise. No preamble, no markdown, just the JSON object.
