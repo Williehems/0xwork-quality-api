@@ -44,6 +44,14 @@ export async function deleteWallet(tgUserId) {
   await pool().query(`DELETE FROM wallet_bindings WHERE tg_user_id = $1`, [tgUserId]);
 }
 
+export async function markOnboarded(tgUserId) {
+  await pool().query(
+    `UPDATE wallet_bindings SET onboarded_at = NOW()
+     WHERE tg_user_id = $1 AND onboarded_at IS NULL`,
+    [tgUserId],
+  );
+}
+
 export async function getRuntimeSettings() {
   const result = await pool().query(`SELECT key, value FROM runtime_settings ORDER BY key`);
   return Object.fromEntries(result.rows.map(r => [r.key, r.value]));

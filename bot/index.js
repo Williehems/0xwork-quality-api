@@ -5,7 +5,7 @@ import { randomUUID, randomBytes } from "node:crypto";
 import express from "express";
 import { Bot, InlineKeyboard } from "grammy";
 
-import { setWallet, getWallet } from "../db/index.js";
+import { setWallet, getWallet, markOnboarded } from "../db/index.js";
 import { listInReviewByPoster, getTaskById, getSubmission } from "../src/zerox/client.js";
 import { inferRubric } from "../src/rubric/index.js";
 import { createApiApp, logApiStartupNotes } from "../src/app.js";
@@ -51,8 +51,6 @@ let botUsername = "";
 const sessions = new Map();
 /** userState: tg_user_id → { kind, ...details, expiresAt } */
 const userState = new Map();
-/** seenInbox: tg_user_ids who have opened inbox at least once (onboarding signal) */
-const seenInbox = new Set();
 /** userGradeTimes: tg_user_id → timestamps[] of recent grading sessions */
 const userGradeTimes = new Map();
 
@@ -333,8 +331,7 @@ async function sendInbox(ctx) {
     );
     return;
   }
-  const firstInbox = !seenInbox.has(userId);
-  seenInbox.add(userId);
+  const firstInbox = !w.onboarded_at;
   const loading = await ctx.reply(`⏳ Fetching your in-review submissions…`);
   let tasks;
   try {
@@ -373,6 +370,7 @@ async function sendInbox(ctx) {
   if (firstInbox) {
     await new Promise(r => setTimeout(r, 500));
     await sendOnboardStep3(ctx);
+    await markOnboarded(userId);
   }
 }
 

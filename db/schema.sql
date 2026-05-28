@@ -8,6 +8,9 @@ CREATE TABLE IF NOT EXISTS wallet_bindings (
   updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE wallet_bindings ADD COLUMN IF NOT EXISTS onboarded_at TIMESTAMPTZ;
+UPDATE wallet_bindings SET onboarded_at = updated_at WHERE onboarded_at IS NULL;
+
 CREATE INDEX IF NOT EXISTS wallet_bindings_wallet_idx ON wallet_bindings (LOWER(wallet));
 
 CREATE TABLE IF NOT EXISTS runtime_settings (
