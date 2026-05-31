@@ -193,27 +193,28 @@ async function tickCommentsForUser(tgUserId) {
     } catch {
       continue;
     }
-    const lastCount = await getLastSeenCount(tgUserId, taskId);
-    if (lastCount == null) {
+    const currentMaxId = maxCommentId(block.comments);
+    // We store the highest comment id seen in last_count (column kept for
+    // backwards compat; the semantic is "high-water mark id"). Comparing by
+    // id is robust to API ordering AND upstream deletions, which a raw count
+    // comparison would silently swallow.
+    const lastSeen = await getLastSeenCount(tgUserId, taskId);
+    if (lastSeen == null) {
       // First time we see this task — prime, no DM.
-      await upsertLastSeenCount(tgUserId, taskId, block.count);
+      await upsertLastSeenCount(tgUserId, taskId, currentMaxId);
       continue;
     }
-    if (block.count <= lastCount) continue;
+    if (currentMaxId <= lastSeen) continue;
 
-    const newOnes = block.comments.slice(lastCount);
+    const newOnes = sortCommentsAsc(block.comments).filter((c) => Number(c.id) > lastSeen);
     for (const c of newOnes.slice(0, 3)) {
-      const author = c.author_username
-        || c.username
-        || (typeof c.author === "string" ? `${c.author.slice(0, 6)}…${c.author.slice(-4)}` : "")
-        || "anon";
       const body = String(c.content ?? c.body ?? c.text ?? "").trim();
       const truncated = body.length > 200 ? body.slice(0, 200) + "…" : body;
       try {
         await bot.api.sendMessage(
           tgUserId,
           `💬 <b>New comment on task #${esc(String(taskId))}</b>\n` +
-            `<b>${esc(author)}</b>\n` +
+            `<b>${esc(commentAuthor(c))}</b>\n` +
             esc(truncated),
           { parse_mode: "HTML", link_preview_options: { is_disabled: true } },
         );
@@ -221,7 +222,7 @@ async function tickCommentsForUser(tgUserId) {
         console.warn(`[notify] DM ${tgUserId} comment failed:`, err.message);
       }
     }
-    await upsertLastSeenCount(tgUserId, taskId, block.count);
+    await upsertLastSeenCount(tgUserId, taskId, currentMaxId);
   }
 }
 
@@ -1344,8 +1345,8 @@ http.post("/action-result/:sessionId", async (req, res) => {
       }
 
       // Prime comment_seen so the background tick doesn't re-notify the
-      // poster about their own comment.
-      try { await upsertLastSeenCount(userId, id, refreshed.count); } catch {}
+      // poster about their own comment. Track by max comment id, not count.
+      try { await upsertLastSeenCount(userId, id, maxCommentId(refreshed.comments)); } catch {}
 
       return res.json({ ok: true });
     }
@@ -1714,20 +1715,48 @@ function renderVerdict(v, meta) {
   return lines.join("\n");
 }
 
+function commentAuthor(c) {
+  const p = c.author_profile ?? {};
+  if (p.username) return `@${p.username}`;
+  if (p.display_name) return p.display_name;
+  const addr = c.author_address ?? (typeof c.author === "string" ? c.author : null);
+  if (addr) return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+  return "anon";
+}
+
+function sortCommentsAsc(comments) {
+  // Defensive sort: the API field order isn't documented. created_at strings
+  // are ISO-ish ("2026-03-14 17:43:38") so lexicographic sort = chronological.
+  // Fall back to numeric id when timestamps are missing or equal.
+  return [...comments].sort((a, b) => {
+    const ta = String(a.created_at ?? "");
+    const tb = String(b.created_at ?? "");
+    if (ta !== tb) return ta < tb ? -1 : 1;
+    const ia = Number(a.id ?? 0);
+    const ib = Number(b.id ?? 0);
+    return ia - ib;
+  });
+}
+
+function maxCommentId(comments) {
+  let max = 0;
+  for (const c of comments) {
+    const id = Number(c.id);
+    if (Number.isFinite(id) && id > max) max = id;
+  }
+  return max;
+}
+
 function renderCommentsBlock(comments, totalCount) {
-  const lines = [`<b>── 💬 COMMENTS (${totalCount})</b>`];
-  const last = comments.slice(-5);
+  const sorted = sortCommentsAsc(comments);
+  const lines = [`<b>── 💬 COMMENTS (${totalCount ?? sorted.length})</b>`];
+  const last = sorted.slice(-5);
   for (const c of last) {
-    const author = c.author_username
-      || c.username
-      || (typeof c.author === "string" ? `${c.author.slice(0, 6)}…${c.author.slice(-4)}` : "")
-      || (typeof c.author_address === "string" ? `${c.author_address.slice(0, 6)}…${c.author_address.slice(-4)}` : "")
-      || "anon";
     const body = String(c.content ?? c.body ?? c.text ?? "").trim();
     const ts = c.created_at ?? c.createdAt ?? c.timestamp ?? c.created_timestamp;
     const when = ts ? ` · ${timeAgo(ts)}` : "";
     const truncated = body.length > 200 ? body.slice(0, 200) + "…" : body;
-    lines.push(`<b>${esc(author)}</b>${when}`, esc(truncated));
+    lines.push(`<b>${esc(commentAuthor(c))}</b>${when}`, esc(truncated));
   }
   return lines.join("\n");
 }
