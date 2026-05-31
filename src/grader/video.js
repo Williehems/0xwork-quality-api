@@ -12,7 +12,7 @@ import { config } from "../config.js";
 import { SYSTEM_PROMPT } from "./prompt.js";
 
 const OEMBED_ENDPOINT = "https://publish.twitter.com/oembed";
-const VISION_MODEL    = "meta-llama/llama-4-scout-17b-16e-instruct";
+export const VISION_MODEL    = "meta-llama/llama-4-scout-17b-16e-instruct";
 
 function isTwitterUrl(raw) {
   try {

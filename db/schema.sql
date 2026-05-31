@@ -18,3 +18,18 @@ CREATE TABLE IF NOT EXISTS runtime_settings (
   value      TEXT NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS comment_seen (
+  tg_user_id   BIGINT NOT NULL,
+  task_id      BIGINT NOT NULL,
+  last_count   INT    NOT NULL DEFAULT 0,
+  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (tg_user_id, task_id)
+);
+
+CREATE TABLE IF NOT EXISTS submission_notified (
+  tg_user_id  BIGINT NOT NULL,
+  task_id     BIGINT NOT NULL,
+  notified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (tg_user_id, task_id)
+);

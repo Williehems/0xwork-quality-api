@@ -5,9 +5,10 @@ import { randomUUID, randomBytes } from "node:crypto";
 import express from "express";
 import { Bot, InlineKeyboard } from "grammy";
 
-import { setWallet, getWallet, markOnboarded } from "../db/index.js";
-import { listInReviewByPoster, getTaskById, getSubmission } from "../src/zerox/client.js";
+import { setWallet, getWallet, markOnboarded, listAllBindings, getLastSeenCount, upsertLastSeenCount, getNotifiedTaskIds, markNotified } from "../db/index.js";
+import { listInReviewByPoster, getTaskById, getSubmission, listComments, getAuthNonce } from "../src/zerox/client.js";
 import { inferRubric } from "../src/rubric/index.js";
+import { draftComment } from "../src/grader/comment.js";
 import { createApiApp, logApiStartupNotes } from "../src/app.js";
 import { isVideoPlatformUrl } from "../src/grader/video.js";
 import { config } from "../src/config.js";
@@ -108,7 +109,121 @@ setInterval(() => {
     if (pruned.length === 0) userGradeTimes.delete(id);
     else userGradeTimes.set(id, pruned);
   }
+  notificationTick().catch((err) =>
+    console.warn("[notify] tick failed:", err.message),
+  );
 }, 5 * 60 * 1000).unref?.();
+
+// Poll 0xwork for new submissions on bound posters' tasks and new comments on
+// tasks each poster has touched. Skips silently if no DB is configured. Primes
+// on first observation per user so a fresh deploy doesn't blast old data.
+async function notificationTick() {
+  if (!process.env.DATABASE_URL) return;
+  let bindings;
+  try {
+    bindings = await listAllBindings();
+  } catch (err) {
+    console.warn("[notify] listAllBindings failed:", err.message);
+    return;
+  }
+
+  for (const { tgUserId, wallet } of bindings) {
+    if (!tgUserId || !wallet) continue;
+    try {
+      await tickSubmissionsForUser(tgUserId, wallet);
+      await tickCommentsForUser(tgUserId);
+    } catch (err) {
+      console.warn(`[notify] user ${tgUserId} failed:`, err.message);
+    }
+  }
+}
+
+async function tickSubmissionsForUser(tgUserId, wallet) {
+  const tasks = await listInReviewByPoster(wallet, { limit: 30 }).catch(() => []);
+  if (!tasks.length) return;
+  const seen = await getNotifiedTaskIds(tgUserId);
+  const isFirstPrime = seen.size === 0;
+  const newTasks = tasks.filter((t) => t.id != null && !seen.has(Number(t.id)));
+  if (!newTasks.length) return;
+
+  // Prime silently the first time we see this user — they may already know
+  // about every submission in the upstream queue.
+  if (isFirstPrime) {
+    await markNotified(tgUserId, newTasks.map((t) => Number(t.id)));
+    return;
+  }
+
+  for (const t of newTasks.slice(0, 5)) {
+    const kb = new InlineKeyboard().text("⚖️ Grade", `grade:${t.id}`);
+    const lines = [
+      `📥 <b>New submission on task #${esc(String(t.id))}</b>`,
+      esc(t.title || "Untitled"),
+      `${formatBounty(t.bounty)} · submitted ${timeAgo(t.submittedAt)}`,
+    ];
+    try {
+      await bot.api.sendMessage(tgUserId, lines.join("\n"), {
+        parse_mode: "HTML",
+        reply_markup: kb,
+        link_preview_options: { is_disabled: true },
+      });
+    } catch (err) {
+      // User may have blocked the bot — skip but still mark notified so we
+      // don't loop forever.
+      console.warn(`[notify] DM ${tgUserId} failed:`, err.message);
+    }
+  }
+  await markNotified(tgUserId, newTasks.map((t) => Number(t.id)));
+}
+
+async function tickCommentsForUser(tgUserId) {
+  // Walk task IDs the user has interacted with: every submission_notified
+  // row is a task they're tracking.
+  let trackedIds;
+  try {
+    trackedIds = await getNotifiedTaskIds(tgUserId);
+  } catch {
+    return;
+  }
+  let scanned = 0;
+  for (const taskId of trackedIds) {
+    if (scanned++ >= 30) break;
+    let block;
+    try {
+      block = await listComments(taskId);
+    } catch {
+      continue;
+    }
+    const lastCount = await getLastSeenCount(tgUserId, taskId);
+    if (lastCount == null) {
+      // First time we see this task — prime, no DM.
+      await upsertLastSeenCount(tgUserId, taskId, block.count);
+      continue;
+    }
+    if (block.count <= lastCount) continue;
+
+    const newOnes = block.comments.slice(lastCount);
+    for (const c of newOnes.slice(0, 3)) {
+      const author = c.author_username
+        || c.username
+        || (typeof c.author === "string" ? `${c.author.slice(0, 6)}…${c.author.slice(-4)}` : "")
+        || "anon";
+      const body = String(c.content ?? c.body ?? c.text ?? "").trim();
+      const truncated = body.length > 200 ? body.slice(0, 200) + "…" : body;
+      try {
+        await bot.api.sendMessage(
+          tgUserId,
+          `💬 <b>New comment on task #${esc(String(taskId))}</b>\n` +
+            `<b>${esc(author)}</b>\n` +
+            esc(truncated),
+          { parse_mode: "HTML", link_preview_options: { is_disabled: true } },
+        );
+      } catch (err) {
+        console.warn(`[notify] DM ${tgUserId} comment failed:`, err.message);
+      }
+    }
+    await upsertLastSeenCount(tgUserId, taskId, block.count);
+  }
+}
 
 // ── Bot commands menu ───────────────────────────────────────────────────
 
@@ -407,7 +522,7 @@ bot.callbackQuery(/^pick:(\d+)$/, async (ctx) => {
     return;
   }
 
-  const taskType = normalizeCategory(task.category);
+  const taskType = task.resultsBased ? "result" : normalizeCategory(task.category);
 
   // Video platform URLs (Twitter, YouTube, TikTok, Vimeo, Loom) are handled
   // directly by the grader's content detector — skip fetchProofContent entirely.
@@ -445,8 +560,11 @@ bot.callbackQuery(/^pick:(\d+)$/, async (ctx) => {
         title: rubric.title,
         topic_keywords: rubric.topic_keywords,
         notes: rubric.notes,
+        target_action: rubric.target_action ?? undefined,
+        success_signals: rubric.success_signals ?? [],
       },
       submission: task.proofUrl ?? "",
+      evidence: [],
       meta: {
         task_id: task.id,
         bounty: task.bounty,
@@ -454,6 +572,7 @@ bot.callbackQuery(/^pick:(\d+)$/, async (ctx) => {
         proof_url: task.proofUrl,
         delivery_description: task.deliveryDescription,
         category: task.category,
+        results_based: task.resultsBased === true,
         submitted_at: task.submittedAt,
         submission_source: "video_url",
       },
@@ -511,8 +630,14 @@ bot.callbackQuery(/^pick:(\d+)$/, async (ctx) => {
       char_limit: rubric.char_limit ?? undefined,
       topic_keywords: rubric.topic_keywords,
       notes: rubric.notes,
+      target_action: rubric.target_action ?? undefined,
+      success_signals: rubric.success_signals ?? [],
     },
     submission: fetchResult.kind === "content" ? fetchResult.text : "",
+    // Evidence and artifact refs now flow on the happy path too — multi-format
+    // submissions (screenshots + URLs + summary) are first-class for result tasks
+    // and useful context for any category.
+    evidence: fetchResult.evidence ?? [],
     meta: {
       task_id: task.id,
       bounty: task.bounty,
@@ -521,13 +646,12 @@ bot.callbackQuery(/^pick:(\d+)$/, async (ctx) => {
         fetchResult.kind === "needs_manual" ? fetchResult.proofUrl : task.proofUrl,
       delivery_description: task.deliveryDescription,
       category: task.category,
+      results_based: task.resultsBased === true,
       submitted_at: task.submittedAt,
-      proof_type: fetchResult.kind === "needs_manual" ? fetchResult.proofType : null,
-      worker_summary: fetchResult.kind === "needs_manual" ? fetchResult.summary : null,
-      content_hash: fetchResult.kind === "needs_manual" ? fetchResult.contentHash : null,
-      artifact_refs:
-        fetchResult.kind === "needs_manual" ? fetchResult.artifactRefs ?? [] : [],
-      evidence: fetchResult.kind === "needs_manual" ? fetchResult.evidence ?? [] : [],
+      proof_type: fetchResult.proofType ?? null,
+      worker_summary: fetchResult.summary ?? null,
+      content_hash: fetchResult.contentHash ?? null,
+      artifact_refs: fetchResult.artifactRefs ?? [],
       submission_format: fetchResult.kind === "content" ? fetchResult.format : null,
       submission_pages: fetchResult.kind === "content" ? fetchResult.pages ?? null : null,
       submission_source: fetchResult.kind === "content" ? "url" : "pending",
@@ -593,7 +717,7 @@ bot.callbackQuery(/^summary:(.+)$/, async (ctx) => {
     return;
   }
   await ctx.answerCallbackQuery();
-  const composed = composeSummaryGradeText(payload.meta);
+  const composed = composeSummaryGradeText(payload.meta, payload.evidence ?? []);
   const noteAddon = "[Grading on submission metadata only — full content not available.]";
   const newReqs = {
     ...payload.requirements,
@@ -662,6 +786,17 @@ bot.callbackQuery(/^confirm:(.+)$/, async (ctx) => {
         tier: payload.tier,
         requirements: payload.requirements,
         submission: payload.submission,
+        evidence: payload.evidence ?? [],
+        meta: payload.meta
+          ? {
+              proof_url: payload.meta.proof_url ?? undefined,
+              content_hash: payload.meta.content_hash ?? undefined,
+              artifact_refs: payload.meta.artifact_refs ?? undefined,
+              summary: payload.meta.worker_summary ?? undefined,
+              results_based: payload.meta.results_based ?? undefined,
+              proof_type: payload.meta.proof_type ?? undefined,
+            }
+          : undefined,
       }),
     });
     if (!res.ok) {
@@ -669,16 +804,30 @@ bot.callbackQuery(/^confirm:(.+)$/, async (ctx) => {
       throw new Error(`API ${res.status}: ${txt.slice(0, 200)}`);
     }
     const verdict = await res.json();
-    sessions.delete(sessionId);
+
+    // Fetch the existing comment thread so the verdict card shows it and the
+    // Comment buttons have a session to bind to. Keep the session alive so
+    // the Mini App can sign + post comments.
+    const taskIdForComments = payload.meta?.task_id;
+    let commentsBlock = { comments: [], count: 0 };
+    if (taskIdForComments) {
+      try { commentsBlock = await listComments(taskIdForComments); } catch {}
+    }
+    const enrichedMeta = {
+      ...payload.meta,
+      comments: commentsBlock.comments,
+      comment_count: commentsBlock.count,
+    };
+    updateSession(sessionId, { verdict, meta: enrichedMeta });
 
     await ctx.editMessageText(
-      renderVerdict(verdict, payload.meta),
-      { parse_mode: "HTML", reply_markup: postVerdictKeyboard() },
+      renderVerdict(verdict, enrichedMeta),
+      { parse_mode: "HTML", reply_markup: postVerdictKeyboard(sessionId) },
     ).catch(async () => {
       // fall back to a new message if edit failed
-      await ctx.reply(renderVerdict(verdict, payload.meta), {
+      await ctx.reply(renderVerdict(verdict, enrichedMeta), {
         parse_mode: "HTML",
-        reply_markup: postVerdictKeyboard(),
+        reply_markup: postVerdictKeyboard(sessionId),
       });
     });
   } catch (err) {
@@ -1038,6 +1187,50 @@ http.get("/session/:id", (req, res) => {
   });
 });
 
+// Proxy a fresh SIWE nonce from 0xwork to the Mini App. The Mini App can't
+// call api.0xwork.org directly because that origin's CORS allowlist doesn't
+// include our Telegram WebView host.
+http.get("/zerox/auth-nonce", async (_req, res) => {
+  try {
+    const nonce = await getAuthNonce();
+    res.json({ nonce });
+  } catch (err) {
+    res.status(502).json({ error: "nonce_fetch_failed", message: err.message });
+  }
+});
+
+// Mini App fetches an auto-drafted comment for a session (verdict already in
+// session). Auth via x-session-secret like the other Mini App endpoints.
+http.get("/comment-draft/:sessionId", async (req, res) => {
+  try {
+    const sessionId = req.params.sessionId;
+    const payload = getSession(sessionId);
+    if (!payload) return res.status(404).json({ error: "session_not_found" });
+
+    const providedSecret = req.headers['x-session-secret'];
+    if (!payload._secret || providedSecret !== payload._secret) {
+      return res.status(403).json({ error: "invalid_session_secret" });
+    }
+    if (!payload.verdict) {
+      return res.status(409).json({ error: "no_verdict_yet" });
+    }
+
+    const v = payload.verdict;
+    const draft = await draftComment({
+      verdict: v.verdict,
+      reasoning: v.reasoning,
+      concerns: v.concerns,
+      strengths: v.strengths,
+      requirements: payload.requirements,
+      recentComments: payload.meta?.comments ?? [],
+    });
+    res.json({ draft });
+  } catch (err) {
+    console.error("[bot] /comment-draft failed:", err);
+    res.status(500).json({ error: "draft_failed", message: err.message });
+  }
+});
+
 // Mini App opened via inline keyboard can't use tg.sendData() — it POSTs the
 // verdict here instead, and we forward it to the user's chat as a message.
 http.post("/verdict/:sessionId", async (req, res) => {
@@ -1080,9 +1273,21 @@ http.post("/verdict/:sessionId", async (req, res) => {
       posterAddress: poster?.wallet ?? freshTask?.posterAddress ?? null,
       discountedFee: freshTask?.discountedFee ?? false,
     };
-    updateSession(sessionId, { task });
+    updateSession(sessionId, { task, verdict });
 
-    await bot.api.sendMessage(userId, renderVerdict(verdict, payload.meta), {
+    const taskIdForComments = payload.meta?.task_id;
+    let commentsBlock = { comments: [], count: 0 };
+    if (taskIdForComments) {
+      try { commentsBlock = await listComments(taskIdForComments); } catch {}
+    }
+    const enrichedMeta = {
+      ...payload.meta,
+      comments: commentsBlock.comments,
+      comment_count: commentsBlock.count,
+    };
+    updateSession(sessionId, { meta: enrichedMeta });
+
+    await bot.api.sendMessage(userId, renderVerdict(verdict, enrichedMeta), {
       parse_mode: "HTML",
       reply_markup: postVerdictKeyboard(sessionId),
     });
@@ -1109,6 +1314,42 @@ http.post("/action-result/:sessionId", async (req, res) => {
     }
 
     const { action, taskId, txHash } = req.body ?? {};
+
+    // Comment action: no on-chain tx — the Mini App signed a SIWE message
+    // and POSTed to 0xwork's /tasks/:id/comments. Confirm in chat and refresh
+    // the comment thread under the verdict card without killing the session
+    // (poster may want to comment again).
+    if (action === "comment") {
+      const id = taskId ?? payload.meta?.task_id;
+      let refreshed = { comments: payload.meta?.comments ?? [], count: payload.meta?.comment_count ?? 0 };
+      if (id) {
+        try { refreshed = await listComments(id); } catch {}
+      }
+      const enrichedMeta = {
+        ...payload.meta,
+        comments: refreshed.comments,
+        comment_count: refreshed.count,
+      };
+      updateSession(sessionId, { meta: enrichedMeta });
+
+      if (payload.verdict) {
+        await bot.api.sendMessage(
+          userId,
+          `💬 <b>Comment posted on task #${esc(String(id ?? "?"))}</b>\n\n` +
+            renderCommentsBlock(refreshed.comments, refreshed.count),
+          { parse_mode: "HTML", reply_markup: postVerdictKeyboard(sessionId), link_preview_options: { is_disabled: true } },
+        );
+      } else {
+        await bot.api.sendMessage(userId, `💬 Comment posted on task #${esc(String(id ?? "?"))}.`);
+      }
+
+      // Prime comment_seen so the background tick doesn't re-notify the
+      // poster about their own comment.
+      try { await upsertLastSeenCount(userId, id, refreshed.count); } catch {}
+
+      return res.json({ ok: true });
+    }
+
     if (action !== "approve" && action !== "dispute") {
       return res.status(400).json({ error: "bad_action" });
     }
@@ -1210,7 +1451,7 @@ startWithRetry().catch((err) => {
 
 // ── Renderers ───────────────────────────────────────────────────────────
 
-function composeSummaryGradeText(meta) {
+function composeSummaryGradeText(meta, evidence = []) {
   const parts = [
     "[NOTE: The full submission content could not be retrieved. The text below contains the worker's summary plus every available submission reference — URL, content hash, artifact IDs, evidence notes. Grade with caution and lean toward 'review' unless the metadata alone gives clear approve/reject signal.]",
     "",
@@ -1232,9 +1473,9 @@ function composeSummaryGradeText(meta) {
     parts.push("", "── SUBMISSION REFERENCES ──", ...submitBits);
   }
 
-  if (Array.isArray(meta.evidence) && meta.evidence.length) {
+  if (Array.isArray(evidence) && evidence.length) {
     parts.push("", "── EVIDENCE ──");
-    for (const e of meta.evidence) {
+    for (const e of evidence) {
       const bits = [];
       if (e.label) bits.push(e.label);
       if (e.kind) bits.push(`(${e.kind})`);
@@ -1274,6 +1515,9 @@ function postVerdictKeyboard(sessionId) {
     const base = `${MINIAPP_URL}?session=${encodeURIComponent(sessionId)}&_v=${encodeURIComponent(BUILD_TOKEN)}`;
     kb.webApp("✅ Approve", `${base}&action=approve`)
       .webApp("⚠️ Dispute", `${base}&action=dispute`)
+      .row()
+      .webApp("💬 Comment", `${base}&action=comment`)
+      .webApp("✨ Auto-comment", `${base}&action=comment&draft=1`)
       .row();
   }
   kb.text("📥 Inbox", "go:inbox").text("🏠 Home", "go:home");
@@ -1282,14 +1526,26 @@ function postVerdictKeyboard(sessionId) {
 
 function renderRubricConfirm(task, rubric, wordCount, format, pages) {
   const fmt = format && format !== "text" ? ` · ${format}${pages ? ` (${pages}pp)` : ""}` : "";
+  const isResult = rubric.results_based === true || task.resultsBased === true;
   const lines = [
     `${categoryIcon(task.category)} <b>Task #${task.id}</b> · ${esc(task.title || "Untitled")}`,
     `${formatBounty(task.bounty)} · submitted ${timeAgo(task.submittedAt)} · ${wordCount} words${fmt}`,
     "",
     `<b>Rubric</b> ${confidenceDot(rubric.confidence)}`,
-    `• Word count: ${rubric.word_count ?? "any"}`,
-    `• Keywords: ${rubric.topic_keywords.length ? rubric.topic_keywords.map((k) => esc(k)).join(", ") : "<i>none</i>"}`,
   ];
+  if (isResult) {
+    lines.push(`• Target: ${esc(rubric.target_action || task.title || "—")}`);
+    lines.push(
+      `• Success looks like: ${rubric.success_signals?.length
+        ? rubric.success_signals.map(esc).join("; ")
+        : "<i>none specified</i>"}`,
+    );
+  } else {
+    lines.push(`• Word count: ${rubric.word_count ?? "any"}`);
+    lines.push(
+      `• Keywords: ${rubric.topic_keywords.length ? rubric.topic_keywords.map((k) => esc(k)).join(", ") : "<i>none</i>"}`,
+    );
+  }
   if (rubric.notes) lines.push(`• Notes: ${esc(rubric.notes)}`);
   if (task.deliveryDescription) {
     lines.push("", `<i>Worker note: ${esc(task.deliveryDescription)}</i>`);
@@ -1300,6 +1556,7 @@ function renderRubricConfirm(task, rubric, wordCount, format, pages) {
 function renderRubricConfirmFromSession(session) {
   const m = session.meta ?? {};
   const subWords = String(session.submission ?? "").split(/\s+/).filter(Boolean).length;
+  const isResult = session.task_type === "result" || m.results_based === true;
   const sourceTag =
     m.submission_source === "pasted" ? " <i>(pasted)</i>" :
     m.submission_source === "summary" ? " <i>(summary only)</i>" :
@@ -1309,9 +1566,19 @@ function renderRubricConfirmFromSession(session) {
     `${formatBounty(m.bounty)} · submitted ${timeAgo(m.submitted_at)} · ${subWords} words${sourceTag}`,
     "",
     `<b>Rubric</b>`,
-    `• Word count: ${session.requirements?.word_count ?? "any"}`,
-    `• Keywords: ${session.requirements?.topic_keywords?.length ? session.requirements.topic_keywords.map(esc).join(", ") : "<i>none</i>"}`,
   ];
+  if (isResult) {
+    lines.push(`• Target: ${esc(session.requirements?.target_action || session.requirements?.title || "—")}`);
+    const signals = session.requirements?.success_signals ?? [];
+    lines.push(
+      `• Success looks like: ${signals.length ? signals.map(esc).join("; ") : "<i>none specified</i>"}`,
+    );
+  } else {
+    lines.push(`• Word count: ${session.requirements?.word_count ?? "any"}`);
+    lines.push(
+      `• Keywords: ${session.requirements?.topic_keywords?.length ? session.requirements.topic_keywords.map(esc).join(", ") : "<i>none</i>"}`,
+    );
+  }
   if (session.requirements?.notes) lines.push(`• Notes: ${esc(session.requirements.notes)}`);
   return lines.join("\n");
 }
@@ -1440,6 +1707,28 @@ function renderVerdict(v, meta) {
     if (notes.length) lines.push("", `<i>${notes.join(" · ")}</i>`);
   }
 
+  if (Array.isArray(meta?.comments) && meta.comments.length) {
+    lines.push("", renderCommentsBlock(meta.comments, meta.comment_count ?? meta.comments.length));
+  }
+
+  return lines.join("\n");
+}
+
+function renderCommentsBlock(comments, totalCount) {
+  const lines = [`<b>── 💬 COMMENTS (${totalCount})</b>`];
+  const last = comments.slice(-5);
+  for (const c of last) {
+    const author = c.author_username
+      || c.username
+      || (typeof c.author === "string" ? `${c.author.slice(0, 6)}…${c.author.slice(-4)}` : "")
+      || (typeof c.author_address === "string" ? `${c.author_address.slice(0, 6)}…${c.author_address.slice(-4)}` : "")
+      || "anon";
+    const body = String(c.content ?? c.body ?? c.text ?? "").trim();
+    const ts = c.created_at ?? c.createdAt ?? c.timestamp ?? c.created_timestamp;
+    const when = ts ? ` · ${timeAgo(ts)}` : "";
+    const truncated = body.length > 200 ? body.slice(0, 200) + "…" : body;
+    lines.push(`<b>${esc(author)}</b>${when}`, esc(truncated));
+  }
   return lines.join("\n");
 }
 

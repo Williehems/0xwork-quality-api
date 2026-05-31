@@ -82,6 +82,12 @@ const $returnSub = document.getElementById("return-sub");
 const $sectionGrade = document.querySelector('[data-mode="grade"]');
 const $sectionApprove = document.querySelector('[data-mode="approve"]');
 const $sectionDispute = document.querySelector('[data-mode="dispute"]');
+const $sectionComment = document.querySelector('[data-mode="comment"]');
+const $commentHeading = document.getElementById('comment-heading');
+const $commentInput = document.getElementById('comment-input');
+const $commentCount = document.getElementById('comment-count');
+const $commentDraftHint = document.getElementById('comment-draft-hint');
+const wantsDraft = params.get('draft') === '1';
 // Wallet-warning disclosure — visible only in approve/dispute (on-chain tx) modes.
 const $walletNotice = document.querySelector('[data-mode="action"]');
 // Approve-specific value slots.
@@ -132,6 +138,8 @@ async function loadSession() {
     if ($gradePrice && payload.price) $gradePrice.textContent = payload.price;
     if (action === "approve" || action === "dispute") {
       renderActionMode(payload, action);
+    } else if (action === "comment") {
+      await renderCommentMode(payload);
     } else {
       renderGradeMode(payload);
     }
@@ -146,6 +154,7 @@ function renderGradeMode(p) {
   $sectionGrade.hidden = false;
   $sectionApprove.hidden = true;
   $sectionDispute.hidden = true;
+  if ($sectionComment) $sectionComment.hidden = true;
   if ($walletNotice) $walletNotice.hidden = true;
   $task.textContent = p.requirements?.title ?? "(untitled)";
   const words = String(p.submission ?? "").split(/\s+/).filter(Boolean).length;
@@ -162,6 +171,7 @@ function renderActionMode(p, kind) {
   $sectionGrade.hidden = true;
   $sectionApprove.hidden = kind !== "approve";
   $sectionDispute.hidden = kind !== "dispute";
+  if ($sectionComment) $sectionComment.hidden = true;
   if ($walletNotice) $walletNotice.hidden = false;
 
   const task = p.task || {};
@@ -188,6 +198,49 @@ function renderActionMode(p, kind) {
   }
 
   $payLabel.textContent = labelForMethod(getSelectedConnectionMethod());
+}
+
+async function renderCommentMode(p) {
+  $sectionGrade.hidden = true;
+  $sectionApprove.hidden = true;
+  $sectionDispute.hidden = true;
+  if ($sectionComment) $sectionComment.hidden = false;
+  if ($walletNotice) $walletNotice.hidden = true;
+
+  const task = p.task || {};
+  const taskId = task.id ?? p.meta?.task_id;
+  $task.textContent = task.title || p.requirements?.title || `Task #${taskId ?? "?"}`;
+  $subMeta.innerHTML =
+    `<strong>Task #${escapeHtml(String(taskId ?? "?"))}</strong>` +
+    `<span class="sep">·</span>` +
+    `<span>${(p.meta?.comment_count ?? 0)} existing comments</span>`;
+  if ($commentHeading) $commentHeading.textContent = `Comment on task #${taskId ?? "?"}`;
+  $payLabel.textContent = labelForMethod(getSelectedConnectionMethod());
+
+  $commentInput?.addEventListener("input", () => {
+    if ($commentCount) $commentCount.textContent = String($commentInput.value.length);
+  });
+
+  if (wantsDraft) {
+    setStatus("Drafting comment…");
+    try {
+      const r = await fetch(`${botBase}/comment-draft/${encodeURIComponent(sessionId)}`, {
+        headers: { "x-session-secret": sessionSecret },
+        cache: "no-store",
+      });
+      if (r.ok) {
+        const { draft } = await r.json();
+        if (draft && $commentInput) {
+          $commentInput.value = draft;
+          if ($commentCount) $commentCount.textContent = String(draft.length);
+          if ($commentDraftHint) $commentDraftHint.hidden = false;
+        }
+      }
+    } catch (err) {
+      console.warn("draft fetch failed:", err);
+    }
+    setStatus("");
+  }
 }
 
 // ─── Wallet connection paths (shared between grade + action flows) ─
@@ -323,6 +376,8 @@ async function onPrimaryClick() {
   try {
     if (action === "approve" || action === "dispute") {
       await signAndSendAction(action);
+    } else if (action === "comment") {
+      await signAndPostComment();
     } else {
       await payAndGrade();
     }
@@ -449,6 +504,93 @@ async function signAndSendAction(kind) {
   showReturnToTelegram(headline, sub, { txHash });
 }
 
+// ─── Comment flow: SIWE-sign + POST to 0xwork ─────────────────────
+async function signAndPostComment() {
+  const task = payload?.task || {};
+  const taskId = task.id ?? payload?.meta?.task_id;
+  if (taskId == null) throw new Error("Session has no task id.");
+
+  const content = $commentInput?.value?.trim() ?? "";
+  if (!content) {
+    setStatus("Write something first.", "err");
+    $pay.disabled = false;
+    setBtnBusy(false);
+    return;
+  }
+
+  const conn = await getConnection();
+  if (!conn) return;
+  const { provider, address } = conn;
+
+  // Same sanity check as approve/dispute — the bot bound a wallet to this
+  // user, and the comment must come from that same address.
+  if (task.posterAddress && address.toLowerCase() !== String(task.posterAddress).toLowerCase()) {
+    throw new Error(
+      `Wallet ${short(address)} isn't the poster of task #${taskId} ` +
+      `(poster: ${short(task.posterAddress)}). Switch wallets or rebind via /wallet.`,
+    );
+  }
+
+  setStatus("Fetching auth nonce…");
+  const nonceRes = await fetch(`${botBase}/zerox/auth-nonce`, { cache: "no-store" });
+  if (!nonceRes.ok) throw new Error(`nonce fetch failed: ${nonceRes.status}`);
+  const { nonce } = await nonceRes.json();
+
+  // EIP-4361 SIWE message — the canonical format. If 0xwork uses a custom
+  // shape we'll learn from the API's error response and adjust here.
+  const issuedAt = new Date().toISOString();
+  const domain = "0xwork.org";
+  const uri = "https://0xwork.org";
+  const statement = `Post a comment on task #${taskId}`;
+  const message =
+    `${domain} wants you to sign in with your Ethereum account:\n` +
+    `${address}\n\n` +
+    `${statement}\n\n` +
+    `URI: ${uri}\n` +
+    `Version: 1\n` +
+    `Chain ID: 8453\n` +
+    `Nonce: ${nonce}\n` +
+    `Issued At: ${issuedAt}`;
+
+  setStatus("Open wallet to sign the comment…");
+  const signature = await provider.request({
+    method: "personal_sign",
+    params: [message, address],
+  });
+
+  setStatus("Posting to 0xwork…");
+  const b64 = typeof btoa === "function"
+    ? btoa(unescape(encodeURIComponent(message)))
+    : Buffer.from(message, "utf-8").toString("base64");
+  const postRes = await fetch(`https://api.0xwork.org/tasks/${encodeURIComponent(taskId)}/comments`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-wallet-address": address,
+      "x-message-b64": b64,
+      "x-signature": signature,
+    },
+    body: JSON.stringify({ content }),
+  });
+  if (!postRes.ok) {
+    const t = await postRes.text().catch(() => "");
+    throw new Error(`0xwork API ${postRes.status}${t ? `: ${t.slice(0, 200)}` : ""}`);
+  }
+  const posted = await postRes.json().catch(() => ({}));
+
+  setStatus("Notifying chat…", "ok");
+  const r = await fetch(`${apiBase}/action-result/${encodeURIComponent(sessionId)}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-session-secret": sessionSecret },
+    body: JSON.stringify({ action: "comment", taskId, commentId: posted?.id ?? posted?.comment?.id ?? null, success: true }),
+  });
+  if (!r.ok) {
+    const t = await r.text().catch(() => "");
+    throw new Error(`Comment posted but chat notify failed: ${r.status}${t ? ` ${t.slice(0, 120)}` : ""}`);
+  }
+  showReturnToTelegram("Comment posted", "Your comment is on 0xwork. Check your Telegram chat for the refreshed thread.");
+}
+
 // ─── Utility ──────────────────────────────────────────────────────
 function short(addr) {
   if (!addr) return "—";
@@ -510,6 +652,7 @@ function setStatus(msg, kind) {
 function labelForMethod(m) {
   const verb = action === "approve" ? "approve"
              : action === "dispute" ? "dispute"
+             : action === "comment" ? "post comment"
              : "pay";
   if (m === "pk") return `Sign with key and ${verb}`;
   return `Connect MetaMask and ${verb}`;

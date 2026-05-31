@@ -1,25 +1,36 @@
 import { runHeuristics, normalizeTaskType } from "./heuristics/index.js";
 import { llmGrade } from "./llm.js";
 import { detectCategoryFromSubmission, llmGradeVideo } from "./video.js";
+import { llmGradeResult } from "./result.js";
 import { config } from "../config.js";
 
-export async function grade({ task_type, tier, requirements, submission }) {
+export async function grade({ task_type, tier, requirements, submission, evidence, meta }) {
   const hintCategory = normalizeTaskType(task_type);
+  const resultsBased = meta?.results_based === true || hintCategory === "result";
 
   // Detect actual content type from submission URL/content.
   // For plain text the hint is returned unchanged; for known URLs (Twitter,
   // YouTube, GitHub, etc.) the content is inspected to override the hint.
-  const { category, videoData } = await detectCategoryFromSubmission(submission, hintCategory);
+  // For results-based tasks we still run detection so video URLs in proof
+  // still yield videoData (thumbnails feed the result LLM), but the final
+  // category is forced to "result".
+  const { category: detected, videoData } = await detectCategoryFromSubmission(submission, hintCategory);
+  const category = resultsBased ? "result" : detected;
 
   // When detection fetched content from a URL (tweet text, page text), use that
   // as the effective submission for text-based heuristics instead of the raw URL.
   // For video tasks videoData is consumed directly; for social/writing tasks the
   // tweet text replaces the URL so character counts, topic coverage, etc. are real.
   const effectiveSubmission =
-    (videoData?.tweetText || videoData?.fallbackText) || submission;
+    (videoData?.tweetText || videoData?.fallbackText) || submission || "";
 
   const heuristics = runHeuristics({
-    task_type: category, submission: effectiveSubmission, requirements, videoData,
+    task_type: category,
+    submission: effectiveSubmission,
+    requirements,
+    videoData,
+    evidence,
+    meta,
   });
 
   if (tier === "fast" || !config.groq.enabled) {
@@ -35,9 +46,22 @@ export async function grade({ task_type, tier, requirements, submission }) {
   }
 
   try {
-    const llm = category === "video"
-      ? await llmGradeVideo({ task_type: category, requirements, videoData, heuristics })
-      : await llmGrade({ task_type: category, requirements, submission: effectiveSubmission, heuristics });
+    let llm;
+    if (category === "video") {
+      llm = await llmGradeVideo({ task_type: category, requirements, videoData, heuristics });
+    } else if (category === "result") {
+      llm = await llmGradeResult({
+        task_type: category,
+        requirements,
+        submission: effectiveSubmission,
+        evidence,
+        meta,
+        videoData,
+        heuristics,
+      });
+    } else {
+      llm = await llmGrade({ task_type: category, requirements, submission: effectiveSubmission, heuristics });
+    }
 
     return {
       task_type: category,
@@ -67,6 +91,18 @@ export async function grade({ task_type, tier, requirements, submission }) {
 }
 
 function heuristicVerdict(h) {
+  // Result tasks: judge proof presence, not text length / coverage.
+  if (h.category === "result") {
+    if ((h.issues ?? []).includes("no_proof")) return "reject";
+    if ((h.issues ?? []).length) return "review";
+    // No URL but summary or hash present — let LLM decide, default to review.
+    if (!h.proof_presence?.has_url && !h.proof_presence?.image_url_count) return "review";
+    // Proof present but zero overlap with declared success signals — the LLM
+    // (or a poster eyeballing the verdict) should take a second look.
+    if (h.target_signal_match?.score === 0 && (h.success_signals?.length ?? 0) > 0) return "review";
+    return "approve";
+  }
+
   // Video has independent logic — skip global word_count / topic_coverage checks
   // which would misfire on empty tweet text.
   if (h.category === "video") {
@@ -108,6 +144,22 @@ function heuristicVerdict(h) {
 
 function heuristicReason(h) {
   const bits = [];
+  if (h.category === "result") {
+    const p = h.proof_presence ?? {};
+    const has = [];
+    if (p.has_url) has.push("url");
+    if (p.image_url_count) has.push(`${p.image_url_count} image${p.image_url_count > 1 ? "s" : ""}`);
+    if (p.has_summary) has.push("summary");
+    if (p.has_content_hash) has.push("hash");
+    if (p.artifact_count) has.push(`${p.artifact_count} artifact ref${p.artifact_count > 1 ? "s" : ""}`);
+    bits.push(`proof: ${has.length ? has.join(", ") : "none"}`);
+    if (h.target_signal_match?.score != null) {
+      bits.push(`target signals ${Math.round(h.target_signal_match.score * 100)}%`);
+    }
+    if (h.issues?.length) bits.push(h.issues.join(", "));
+    return bits.join("; ");
+  }
+
   if (h.category === "video") {
     bits.push(`platform: ${h.platform}`);
     if (!h.has_transcript) bits.push("no tweet text");

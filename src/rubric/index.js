@@ -7,7 +7,9 @@
 //     word_count?: number,        // inferred lower bound, omitted if no signal
 //     topic_keywords: string[],   // 3-8 short keywords from the description
 //     notes: string,              // 1-2 sentence summary of any extra criteria
-//     confidence: number          // 0..1 — low when the description is vague
+//     confidence: number,         // 0..1 — low when the description is vague
+//     target_action?: string,     // result tasks: what outcome must be achieved
+//     success_signals?: string[], // result tasks: observable indicators of success
 //   }
 
 import Groq from "groq-sdk";
@@ -21,7 +23,9 @@ Return a single JSON object with this exact shape:
   "char_limit": <integer or null — only for social/tweet tasks; default 280 if the platform is Twitter/X and no explicit limit is given>,
   "topic_keywords": ["3-8 short keywords or phrases the submission MUST cover, drawn from the description"],
   "notes": "1-2 sentence summary of any other specific criteria (tone, format, source citations, code language, etc.)",
-  "confidence": <number 0..1: 1 = description is detailed and explicit, 0.3 = vague / underspecified>
+  "confidence": <number 0..1: 1 = description is detailed and explicit, 0.3 = vague / underspecified>,
+  "target_action": <string or null — for results-based tasks only: the concrete outcome the worker must achieve, in one sentence (e.g. "@user follows @Inner_Axiom", "tweet receives 1000 retweets"). null for content tasks.>,
+  "success_signals": [<for results-based tasks only: observable indicators that would prove the action happened (e.g. "follow button shows 'Following'", "follower count includes @user", "screenshot of metric"). Empty array for content tasks.>]
 }
 
 Guidelines:
@@ -31,8 +35,11 @@ Guidelines:
 - For code tasks, keywords should describe functionality, language, or features required ("authentication", "REST API", "typescript", "tests"). word_count is rarely relevant for code; leave null unless explicit.
 - For research tasks, keywords should cover topic areas AND look for citation/source requirements in notes.
 - For data tasks, note expected format (csv/json) and shape (columns, row counts) in notes.
+- For results-based tasks (the prompt will tell you when), set word_count and char_limit to null, set topic_keywords to a small set drawn from the action description, and fill target_action + success_signals. Otherwise leave target_action null and success_signals empty.
 - Keywords should be lowercase, 1-3 words each, no duplicates.
 - Output JSON only. No preamble.`;
+
+const RESULTS_BASED_DESC_RE = /results[-\s]based task|multiple people can attempt/i;
 
 let _client = null;
 function client() {
@@ -40,12 +47,19 @@ function client() {
   return _client;
 }
 
-export async function inferRubric({ description, requirements, title, category }) {
+export async function inferRubric({ description, requirements, title, category, resultsBased }) {
   if (!process.env.GROQ_API_KEY) {
     throw new Error("GROQ_API_KEY not set — cannot infer rubric");
   }
+
+  // Fallback detection when the upstream flag isn't carried (older API responses):
+  // honor the explicit false case, otherwise sniff the description.
+  const isResult = resultsBased === true
+    || (resultsBased === undefined && RESULTS_BASED_DESC_RE.test(description ?? ""));
+
   const userMessage = [
     `Task category: ${category ?? "unknown"}`,
+    isResult ? "Task mode: RESULTS-BASED — fill target_action + success_signals, leave word_count + char_limit null." : "",
     title ? `Task title: ${title}` : "",
     requirements ? `Explicit requirements field:\n${requirements}` : "",
     `Description:\n${description ?? "(empty)"}`,
@@ -63,7 +77,7 @@ export async function inferRubric({ description, requirements, title, category }
     ],
     response_format: { type: "json_object" },
     temperature: 0.2,
-    max_tokens: 400,
+    max_tokens: 500,
   });
 
   const raw = completion.choices?.[0]?.message?.content ?? "{}";
@@ -87,5 +101,13 @@ export async function inferRubric({ description, requirements, title, category }
       typeof parsed.confidence === "number"
         ? Math.max(0, Math.min(1, parsed.confidence))
         : 0.5,
+    target_action:
+      typeof parsed.target_action === "string" && parsed.target_action.trim()
+        ? parsed.target_action.trim()
+        : (isResult ? (title ?? null) : null),
+    success_signals: Array.isArray(parsed.success_signals)
+      ? parsed.success_signals.map((s) => String(s).trim()).filter(Boolean).slice(0, 8)
+      : [],
+    results_based: isResult,
   };
 }

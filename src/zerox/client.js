@@ -48,6 +48,25 @@ export async function getTaskById(taskId) {
   return task ? normalizeTask(task) : null;
 }
 
+/** Fetch /tasks/:id/comments — public, no auth. Returns { comments, count }. */
+export async function listComments(taskId) {
+  const res = await fetch(`${API}/tasks/${encodeURIComponent(taskId)}/comments`);
+  if (!res.ok) throw new Error(`0xwork comments failed: HTTP ${res.status}`);
+  const data = await res.json();
+  return {
+    comments: Array.isArray(data.comments) ? data.comments : [],
+    count: typeof data.count === "number" ? data.count : (data.comments?.length ?? 0),
+  };
+}
+
+/** Fetch a fresh SIWE nonce from /auth/nonce. Returns the nonce string. */
+export async function getAuthNonce() {
+  const res = await fetch(`${API}/auth/nonce`);
+  if (!res.ok) throw new Error(`0xwork nonce failed: HTTP ${res.status}`);
+  const data = await res.json();
+  return data.nonce;
+}
+
 /** Fetch /tasks/:id/proof — richer than the bare proof_hash. Returns null on 404. */
 export async function getProofMeta(taskId) {
   const res = await fetch(`${API}/tasks/${encodeURIComponent(taskId)}/proof`);
@@ -115,7 +134,18 @@ export async function getSubmission(taskId, fallbackProofUrl) {
 
   try {
     const content = await fetchProofContent(url);
-    return { kind: "content", ...content };
+    return {
+      kind: "content",
+      ...content,
+      // Surface proof metadata on the happy path too so multi-format submissions
+      // (screenshots, artifact refs, worker summary) flow through to the grader
+      // — not just on the needs_manual branch.
+      summary: meta?.summary ?? null,
+      evidence: meta?.evidence ?? [],
+      artifactRefs: meta?.artifactRefs ?? [],
+      contentHash: meta?.contentHash ?? null,
+      proofType: meta?.proofType ?? null,
+    };
   } catch (err) {
     return makeManual(`Couldn't fetch the proof URL (${err.message})`);
   }
@@ -241,6 +271,7 @@ function normalizeTask(t) {
     deliveryDescription: t.delivery_description ?? null,
     deadline: t.deadline ?? null,
     submittedAt: t.submit_timestamp ?? null,
+    resultsBased: Boolean(t.results_based ?? t.resultsBased ?? false),
     raw: t,
   };
 }

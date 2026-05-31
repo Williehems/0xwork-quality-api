@@ -1,6 +1,22 @@
 import { z } from "zod";
 import { grade } from "../grader/index.js";
 
+const EvidenceItemSchema = z.object({
+  label: z.string().optional(),
+  kind: z.string().optional(),
+  url: z.string().optional(),
+  note: z.string().optional(),
+});
+
+const MetaSchema = z.object({
+  proof_url: z.string().optional(),
+  content_hash: z.string().optional(),
+  artifact_refs: z.array(z.string()).optional(),
+  summary: z.string().optional(),
+  results_based: z.boolean().optional(),
+  proof_type: z.string().optional(),
+});
+
 const CheckRequestSchema = z.object({
   task_type: z
     .string()
@@ -13,8 +29,21 @@ const CheckRequestSchema = z.object({
     topic_keywords: z.array(z.string()).default([]),
     notes: z.string().optional(),
     char_limit: z.number().int().positive().optional(),
+    target_action: z.string().optional(),
+    success_signals: z.array(z.string()).default([]),
   }),
-  submission: z.string().min(1),
+  submission: z.string().default(""),
+  evidence: z.array(EvidenceItemSchema).default([]),
+  meta: MetaSchema.optional(),
+}).superRefine((data, ctx) => {
+  // Submission may be empty only when there's evidence to grade (result tasks).
+  if ((data.submission?.length ?? 0) === 0 && data.evidence.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["submission"],
+      message: "submission is required unless evidence[] is provided",
+    });
+  }
 });
 
 export async function checkRoute(req, res, next) {

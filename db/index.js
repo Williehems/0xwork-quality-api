@@ -66,3 +66,51 @@ export async function setRuntimeSetting(key, value) {
     [key, String(value)],
   );
 }
+
+export async function listAllBindings() {
+  const result = await pool().query(
+    `SELECT tg_user_id, tg_username, wallet FROM wallet_bindings WHERE wallet IS NOT NULL`,
+  );
+  return result.rows.map((r) => ({
+    tgUserId: Number(r.tg_user_id),
+    tgUsername: r.tg_username,
+    wallet: r.wallet,
+  }));
+}
+
+export async function getLastSeenCount(tgUserId, taskId) {
+  const result = await pool().query(
+    `SELECT last_count FROM comment_seen WHERE tg_user_id = $1 AND task_id = $2`,
+    [tgUserId, taskId],
+  );
+  return result.rows[0]?.last_count ?? null;
+}
+
+export async function upsertLastSeenCount(tgUserId, taskId, count) {
+  await pool().query(
+    `INSERT INTO comment_seen (tg_user_id, task_id, last_count, last_seen_at)
+     VALUES ($1, $2, $3, NOW())
+     ON CONFLICT (tg_user_id, task_id) DO UPDATE
+       SET last_count = EXCLUDED.last_count, last_seen_at = NOW()`,
+    [tgUserId, taskId, count],
+  );
+}
+
+export async function getNotifiedTaskIds(tgUserId) {
+  const result = await pool().query(
+    `SELECT task_id FROM submission_notified WHERE tg_user_id = $1`,
+    [tgUserId],
+  );
+  return new Set(result.rows.map((r) => Number(r.task_id)));
+}
+
+export async function markNotified(tgUserId, taskIds) {
+  if (!taskIds.length) return;
+  const values = taskIds.map((_, i) => `($1, $${i + 2}, NOW())`).join(", ");
+  await pool().query(
+    `INSERT INTO submission_notified (tg_user_id, task_id, notified_at)
+     VALUES ${values}
+     ON CONFLICT (tg_user_id, task_id) DO NOTHING`,
+    [tgUserId, ...taskIds],
+  );
+}
