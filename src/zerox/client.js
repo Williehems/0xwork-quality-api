@@ -151,6 +151,29 @@ export async function getSubmission(taskId, fallbackProofUrl) {
   }
 }
 
+// Refuses to fetch URLs that resolve (textually, pre-DNS) to private / link-local /
+// cloud-metadata addresses. The DNS-rebinding case (hostname resolves to public,
+// then to private on second lookup) isn't covered by this check — for that you'd
+// need an HTTP client that pins resolved IPs. Best-effort blocklist for now.
+const PRIVATE_HOST_RE =
+  /^(?:localhost|0(?:\.0){0,3}|127(?:\.\d{1,3}){0,3}|10(?:\.\d{1,3}){0,3}|192\.168(?:\.\d{1,3}){0,2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){0,2}|169\.254(?:\.\d{1,3}){0,2}|fc00:|fd[0-9a-f]{2}:|fe80:|::1|metadata\.google\.internal|169\.254\.169\.254)$/i;
+
+function assertPublicUrl(rawUrl) {
+  let u;
+  try {
+    u = new URL(rawUrl);
+  } catch {
+    throw new Error("invalid URL");
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") {
+    throw new Error(`refused scheme: ${u.protocol}`);
+  }
+  const host = u.hostname.toLowerCase();
+  if (PRIVATE_HOST_RE.test(host)) {
+    throw new Error(`refused private/internal host: ${host}`);
+  }
+}
+
 /** Resolve a proof URL and return its content as text, with format detection. */
 export async function fetchProofContent(proofUrl) {
   if (!proofUrl) throw new Error("no proof url");
@@ -163,11 +186,27 @@ export async function fetchProofContent(proofUrl) {
     url = IPFS_GATEWAY + cid;
   }
   url = rewriteUrl(url);
+  assertPublicUrl(url);
 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), PROOF_FETCH_TIMEOUT_MS);
   try {
-    const res = await fetch(url, { redirect: "follow", signal: ctrl.signal });
+    // Walk redirects manually so we can re-check each hop against the SSRF
+    // blocklist. fetch(..., {redirect: "follow"}) would silently jump to
+    // an internal address if a public host returned 302 to 169.254.x.x.
+    let current = url;
+    let res;
+    for (let hop = 0; hop < 5; hop++) {
+      res = await fetch(current, { redirect: "manual", signal: ctrl.signal });
+      if (res.status >= 300 && res.status < 400) {
+        const loc = res.headers.get("location");
+        if (!loc) break;
+        current = new URL(loc, current).toString();
+        assertPublicUrl(current);
+        continue;
+      }
+      break;
+    }
     if (!res.ok) throw new Error(`proof fetch failed: HTTP ${res.status}`);
     const contentType = res.headers.get("content-type") ?? "";
     const buf = Buffer.from(await res.arrayBuffer());

@@ -305,6 +305,15 @@ async function connectWithPrivateKey(rawKey) {
         });
         return sent.hash;
       }
+      if (method === "personal_sign") {
+        // [message, address] per EIP-191. Hex-encoded messages are decoded;
+        // raw strings are signed as-is. ethers wraps the EIP-191 prefix.
+        const raw = params?.[0];
+        const bytes = typeof raw === "string" && /^0x[0-9a-fA-F]*$/.test(raw)
+          ? ethers.getBytes(raw)
+          : raw;
+        return wallet.signMessage(bytes);
+      }
       throw new Error(`PK provider does not implement ${method}`);
     },
   };

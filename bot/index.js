@@ -1,7 +1,7 @@
 import "dotenv/config";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomUUID, randomBytes } from "node:crypto";
+import { randomUUID, randomBytes, timingSafeEqual } from "node:crypto";
 import express from "express";
 import { Bot, InlineKeyboard } from "grammy";
 
@@ -1217,7 +1217,7 @@ http.get("/comment-draft/:sessionId", async (req, res) => {
     if (!payload) return res.status(404).json({ error: "session_not_found" });
 
     const providedSecret = req.headers['x-session-secret'];
-    if (!payload._secret || providedSecret !== payload._secret) {
+    if (!payload._secret || !secretsEqual(providedSecret, payload._secret)) {
       return res.status(403).json({ error: "invalid_session_secret" });
     }
     if (!payload.verdict) {
@@ -1250,8 +1250,8 @@ http.post("/verdict/:sessionId", async (req, res) => {
     const userId = payload.userId;
     if (!userId) return res.status(400).json({ error: "session_has_no_user" });
 
-    const providedSecret = req.headers['x-session-secret'] ?? req.body?._secret;
-    if (!payload._secret || !providedSecret || providedSecret !== payload._secret) {
+    const providedSecret = req.headers['x-session-secret'];
+    if (!payload._secret || !secretsEqual(providedSecret, payload._secret)) {
       return res.status(403).json({ error: "invalid_session_secret" });
     }
 
@@ -1317,8 +1317,8 @@ http.post("/action-result/:sessionId", async (req, res) => {
     const userId = payload.userId;
     if (!userId) return res.status(400).json({ error: "session_has_no_user" });
 
-    const providedSecret = req.headers['x-session-secret'] ?? req.body?._secret;
-    if (!payload._secret || !providedSecret || providedSecret !== payload._secret) {
+    const providedSecret = req.headers['x-session-secret'];
+    if (!payload._secret || !secretsEqual(providedSecret, payload._secret)) {
       return res.status(403).json({ error: "invalid_session_secret" });
     }
 
@@ -1349,8 +1349,10 @@ http.post("/action-result/:sessionId", async (req, res) => {
       if (payload.verdict) {
         await bot.api.sendMessage(
           userId,
-          `💬 <b>Comment posted on task #${esc(String(id ?? "?"))}</b>\n\n` +
-            renderCommentsBlock(refreshed.comments, refreshed.count),
+          trimToTelegramLimit(
+            `💬 <b>Comment posted on task #${esc(String(id ?? "?"))}</b>\n\n` +
+              renderCommentsBlock(refreshed.comments, refreshed.count),
+          ),
           { parse_mode: "HTML", reply_markup: postVerdictKeyboard(sessionId), link_preview_options: { is_disabled: true } },
         );
       } else {
@@ -1752,7 +1754,7 @@ function renderVerdict(v, meta) {
     lines.push("", renderCommentsBlock(meta.comments, meta.comment_count ?? meta.comments.length));
   }
 
-  return lines.join("\n");
+  return trimToTelegramLimit(lines.join("\n"));
 }
 
 function commentAuthor(c) {
@@ -1860,7 +1862,29 @@ function esc(s) {
   return String(s ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+// Telegram messages cap at 4096 chars. Verdict + comments can grow past that
+// when long worker comments stack up; truncate defensively so sendMessage
+// doesn't 400 silently.
+const TELEGRAM_MESSAGE_MAX = 4000;
+function trimToTelegramLimit(text) {
+  if (text.length <= TELEGRAM_MESSAGE_MAX) return text;
+  return text.slice(0, TELEGRAM_MESSAGE_MAX - 100)
+    + "\n\n<i>… message truncated — see full thread on 0xwork.org</i>";
+}
+
+// Constant-time secret compare. Returns false for any mismatch including
+// length differences (so we don't leak length via early return).
+function secretsEqual(provided, expected) {
+  if (typeof provided !== "string" || typeof expected !== "string") return false;
+  const p = Buffer.from(provided);
+  const e = Buffer.from(expected);
+  if (p.length !== e.length) return false;
+  return timingSafeEqual(p, e);
 }
 
 function isAddress(s) {
