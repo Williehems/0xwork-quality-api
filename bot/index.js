@@ -127,15 +127,23 @@ async function notificationTick() {
     return;
   }
 
-  for (const { tgUserId, wallet } of bindings) {
-    if (!tgUserId || !wallet) continue;
-    try {
-      await tickSubmissionsForUser(tgUserId, wallet);
-      await tickCommentsForUser(tgUserId);
-    } catch (err) {
-      console.warn(`[notify] user ${tgUserId} failed:`, err.message);
+  // Run users with bounded concurrency so one slow upstream call doesn't
+  // block every other user's tick. 5 concurrent is conservative — well
+  // under any reasonable rate limit.
+  const queue = bindings.filter((b) => b.tgUserId && b.wallet);
+  const CONCURRENCY = 5;
+  const workers = Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
+    while (queue.length) {
+      const { tgUserId, wallet } = queue.shift();
+      try {
+        await tickSubmissionsForUser(tgUserId, wallet);
+        await tickCommentsForUser(tgUserId);
+      } catch (err) {
+        console.warn(`[notify] user ${tgUserId} failed:`, err.message);
+      }
     }
-  }
+  });
+  await Promise.allSettled(workers);
 }
 
 async function tickSubmissionsForUser(tgUserId, wallet) {
@@ -1322,6 +1330,11 @@ http.post("/action-result/:sessionId", async (req, res) => {
     // (poster may want to comment again).
     if (action === "comment") {
       const id = taskId ?? payload.meta?.task_id;
+      const prevLastSeen = id
+        ? (await getLastSeenCount(userId, id).catch(() => null)) ?? 0
+        : 0;
+      const myCommentId = Number(req.body?.commentId);
+
       let refreshed = { comments: payload.meta?.comments ?? [], count: payload.meta?.comment_count ?? 0 };
       if (id) {
         try { refreshed = await listComments(id); } catch {}
@@ -1342,6 +1355,33 @@ http.post("/action-result/:sessionId", async (req, res) => {
         );
       } else {
         await bot.api.sendMessage(userId, `💬 Comment posted on task #${esc(String(id ?? "?"))}.`);
+      }
+
+      // Race: if a worker comment landed between the poster's last view and
+      // this post, the upsert below would bump last_seen past it and the
+      // next tick would silently skip the notification. Surface other-author
+      // comments now before raising the watermark.
+      const poster = await getWallet(userId).catch(() => null);
+      const posterAddr = poster?.wallet?.toLowerCase?.() ?? null;
+      const otherNew = sortCommentsAsc(refreshed.comments).filter((c) => {
+        const cid = Number(c.id);
+        if (!Number.isFinite(cid) || cid <= prevLastSeen) return false;
+        if (Number.isFinite(myCommentId) && cid === myCommentId) return false;
+        if (posterAddr && String(c.author_address ?? "").toLowerCase() === posterAddr) return false;
+        return true;
+      });
+      for (const c of otherNew.slice(0, 3)) {
+        const body = String(c.content ?? c.body ?? "").trim();
+        const truncated = body.length > 200 ? body.slice(0, 200) + "…" : body;
+        try {
+          await bot.api.sendMessage(
+            userId,
+            `💬 <b>Also new on task #${esc(String(id))}</b>\n` +
+              `<b>${esc(commentAuthor(c))}</b>\n` +
+              esc(truncated),
+            { parse_mode: "HTML", link_preview_options: { is_disabled: true } },
+          );
+        } catch {}
       }
 
       // Prime comment_seen so the background tick doesn't re-notify the

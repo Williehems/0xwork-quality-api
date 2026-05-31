@@ -559,9 +559,8 @@ async function signAndPostComment() {
   });
 
   setStatus("Posting to 0xwork…");
-  const b64 = typeof btoa === "function"
-    ? btoa(unescape(encodeURIComponent(message)))
-    : Buffer.from(message, "utf-8").toString("base64");
+  // Classic UTF-8 → base64 idiom; btoa is always present in browsers.
+  const b64 = btoa(unescape(encodeURIComponent(message)));
   const postRes = await fetch(`https://api.0xwork.org/tasks/${encodeURIComponent(taskId)}/comments`, {
     method: "POST",
     headers: {
