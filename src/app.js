@@ -4,6 +4,7 @@ import { config } from "./config.js";
 import { checkRoute } from "./routes/check.js";
 import { healthRoute } from "./routes/health.js";
 import { statsRoute } from "./routes/stats.js";
+import { homeRoute } from "./routes/home.js";
 import { mountX402 } from "./middleware/x402.js";
 import * as settings from "./settings.js";
 
@@ -20,6 +21,7 @@ export function createApiApp() {
   });
   app.use(express.json({ limit: "1mb" }));
 
+  app.get("/", homeRoute);
   app.use("/healthz", healthRoute);
   app.get("/stats", statsRoute);
   app.get("/stats.json", statsRoute);

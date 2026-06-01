@@ -2,6 +2,8 @@ import { getGradeStats } from "../../db/index.js";
 import { config } from "../config.js";
 import * as settings from "../settings.js";
 
+const LOGO_SVG = `<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" style="width:22px;height:22px;border-radius:5px;overflow:hidden;vertical-align:middle;flex-shrink:0"><rect width="512" height="512" fill="#17212B"/><rect x="96" y="402" width="320" height="38" rx="19" fill="#3390EC"/><g transform="rotate(-10 256 256)"><rect x="242" y="72" width="28" height="232" rx="14" fill="#3390EC"/><rect x="148" y="288" width="216" height="88" rx="22" fill="#3390EC"/></g></svg>`;
+
 function pct(n, total) {
   if (!total) return "0";
   return ((n / total) * 100).toFixed(1);
@@ -44,6 +46,9 @@ function renderHtml(stats, price, payTo, bypass) {
 
   .header { margin-bottom: 2.5rem; }
   .header-eyebrow {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
     font-size: 0.68rem;
     color: #00ff88;
     letter-spacing: 0.15em;
@@ -222,7 +227,7 @@ function renderHtml(stats, price, payTo, bypass) {
 <div class="wrap">
 
   <div class="header">
-    <div class="header-eyebrow">⚖ Gavel</div>
+    <div class="header-eyebrow">${LOGO_SVG} Gavel</div>
     <div class="header-title">Grading Stats</div>
     <div class="header-sub">Live data · <a href="/stats.json">JSON</a></div>
   </div>

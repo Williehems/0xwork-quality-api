@@ -926,7 +926,9 @@ function renderAdminPanel() {
     .text("🤖 Change model",  "admin:edit:groq_model")
     .text(maintenance ? "🟢 Maint. ON→OFF" : "🔴 Maint. OFF→ON", "admin:toggle:maintenance")
     .row()
-    .text("↩ Close",          "admin:close");
+    .url("📊 Stats",           "https://zeroxwork-quality-api.onrender.com/stats")
+    .row()
+    .text("↩ Close",           "admin:close");
 
   return { text, kb };
 }
@@ -1168,7 +1170,7 @@ http.use((req, res, next) => {
   next();
 });
 http.use(express.json({ limit: "32kb" }));
-http.get("/", (_req, res) => res.json({ ok: true, service: "bot+api" }));
+// Root handled by createApiApp() homeRoute
 
 // Serve the Telegram Mini App at /app (e.g. /app/index.html, /app/app.js).
 // Telegram's WebView caches HTML aggressively, so disable caching on all
