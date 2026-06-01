@@ -19,7 +19,9 @@ Rules:
 - Don't restate the rubric verbatim.
 - Don't mention Gavel, AI, or grading by name (you're posing as the poster).
 - Plain text. No markdown, no signature, no emojis.
-- If recent comments are provided, don't repeat what was already said.
+- If RECENT THREAD is provided and contains messages labeled (worker), acknowledge the worker's most recent (worker)-labeled message directly. Never restart the conversation as if prior messages don't exist.
+- For review/reject only: name exactly ONE specific action the worker must take. If the worker already promised that action in the thread, skip asking and instead confirm you're watching for it.
+- If acknowledging the thread and naming an action conflict with the 280-char limit, drop the acknowledgment — the action comes first.
 
 Return a single JSON object: { "comment": "..." }`;
 
@@ -43,7 +45,7 @@ function fallbackDraft({ verdict, reasoning, concerns, strengths, title }) {
   return `Thanks for the submission${taskRef}. ${concern ?? reasoning ?? "A few things need adjusting before I can approve."} Could you revise and resubmit?`;
 }
 
-export async function draftComment({ verdict, reasoning, concerns, strengths, requirements, recentComments }) {
+export async function draftComment({ verdict, reasoning, concerns, strengths, requirements, recentComments, workerAddress }) {
   const title = requirements?.title;
   const fallback = fallbackDraft({
     verdict,
@@ -55,9 +57,21 @@ export async function draftComment({ verdict, reasoning, concerns, strengths, re
 
   if (!config.groq.enabled) return fallback;
 
-  const recent = (recentComments ?? [])
+  const workerAddr = (workerAddress ?? "").toLowerCase();
+  const recent = [...(recentComments ?? [])]
+    .sort((a, b) => {
+      const ta = String(a.created_at ?? "");
+      const tb = String(b.created_at ?? "");
+      if (ta !== tb) return ta < tb ? -1 : 1;
+      return Number(a.id ?? 0) - Number(b.id ?? 0);
+    })
     .slice(-3)
-    .map((c) => `- ${c.author_username ?? c.author ?? "someone"}: ${c.content ?? c.body ?? ""}`)
+    .map((c) => {
+      const isWorker = workerAddr && String(c.author_address ?? "").toLowerCase() === workerAddr;
+      const role = isWorker ? "(worker)" : "(poster)";
+      const who = c.author_username ?? c.author ?? "someone";
+      return `- ${who} ${role}: ${c.content ?? c.body ?? ""}`;
+    })
     .filter((s) => s.length > 5)
     .join("\n");
 

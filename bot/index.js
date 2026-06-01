@@ -1232,6 +1232,7 @@ http.get("/comment-draft/:sessionId", async (req, res) => {
       strengths: v.strengths,
       requirements: payload.requirements,
       recentComments: payload.meta?.comments ?? [],
+      workerAddress: payload.meta?.worker_address ?? null,
     });
     res.json({ draft });
   } catch (err) {
