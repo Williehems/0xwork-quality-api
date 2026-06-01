@@ -29,6 +29,7 @@ function renderHome(model, bypass) {
     align-items: center;
     justify-content: center;
     padding: 3rem 1.5rem;
+    border-top: 2px solid #3390EC;
   }
 
   .hero {
@@ -103,7 +104,7 @@ function renderHome(model, bypass) {
     display: flex;
     flex-direction: column;
     gap: 0;
-    border: 1px solid #151515;
+    border: 1px solid #1a1a1a;
     border-radius: 6px;
     overflow: hidden;
     margin-bottom: 3rem;
@@ -113,7 +114,7 @@ function renderHome(model, bypass) {
     align-items: flex-start;
     gap: 1rem;
     padding: 1rem 1.1rem;
-    border-bottom: 1px solid #111;
+    border-bottom: 1px solid #131313;
     text-align: left;
   }
   .step:last-child { border-bottom: none; }
@@ -135,19 +136,19 @@ function renderHome(model, bypass) {
   }
   .step-desc {
     font-size: 0.72rem;
-    color: #444;
+    color: #555;
     line-height: 1.5;
   }
 
   .meta {
     font-size: 0.65rem;
-    color: #2a2a2a;
+    color: #333;
     letter-spacing: 0.06em;
     text-align: center;
     line-height: 1.8;
   }
-  .meta a { color: #333; text-decoration: none; }
-  .meta a:hover { color: #555; }
+  .meta a { color: #444; text-decoration: none; }
+  .meta a:hover { color: #666; }
 </style>
 </head>
 <body>

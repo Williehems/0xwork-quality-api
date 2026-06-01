@@ -406,6 +406,7 @@
     padding: 7px 12px;
     background: #f8f8f8;
     border-bottom: 1px solid #eee;
+    font-family: "SF Mono", "Fira Code", "Consolas", monospace;
   }
   .gavel-icon-box {
     width: 20px; height: 20px;
@@ -427,8 +428,8 @@
     color: #bbb;
     font-family: monospace;
   }
-  .gavel-meta a { color: #999; text-decoration: none; }
-  .gavel-meta a:hover { color: #555; }
+  .gavel-meta a { color: #3390EC; text-decoration: none; }
+  .gavel-meta a:hover { color: #2277cc; }
 
   .verdict-row {
     display: flex;
@@ -494,19 +495,22 @@
   .state-loading .verdict-chip  { background: #e0e0e0; color: transparent; }
   .state-loading .verdict-main  { color: #bbb; }
 
-  .gavel-body { padding: 12px 14px; }
+  .gavel-body {
+    padding: 12px 14px;
+    font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+  }
 
   .conf-bar {
-    height: 3px;
-    background: #eee;
-    border-radius: 2px;
-    margin-bottom: 10px;
+    height: 5px;
+    background: #ebebeb;
+    border-radius: 3px;
+    margin-bottom: 12px;
     overflow: hidden;
   }
   .conf-fill {
     height: 100%;
-    border-radius: 2px;
-    transition: width 0.6s ease, background 0.3s;
+    border-radius: 3px;
+    transition: width 0.7s ease, background 0.3s;
   }
   .state-approve .conf-fill { background: #00c836; }
   .state-review  .conf-fill { background: #e6a700; }
@@ -514,10 +518,10 @@
   .state-loading .conf-fill { background: #ddd; }
 
   .gavel-reasoning {
-    font-size: 0.81rem;
+    font-size: 0.79rem;
     color: #333;
     line-height: 1.6;
-    margin-bottom: 10px;
+    margin-bottom: 12px;
   }
   .gavel-bullets-block { margin-bottom: 8px; }
   .gavel-bullets-block:last-child { margin-bottom: 0; }
