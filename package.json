@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@coinbase/x402": "^2.1.0",
-    "dotenv": "^16.4.5",
+    "dotenv": "^17.4.2",
     "express": "^4.21.1",
     "express-rate-limit": "^8.5.2",
     "grammy": "^1.30.0",
