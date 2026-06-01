@@ -9,7 +9,7 @@
 import { fetchProofContent } from "../zerox/client.js";
 import Groq from "groq-sdk";
 import { config } from "../config.js";
-import { SYSTEM_PROMPT } from "./prompt.js";
+import { SYSTEM_PROMPT, unavailableKindLabel } from "./prompt.js";
 
 const OEMBED_ENDPOINT = "https://publish.twitter.com/oembed";
 export const VISION_MODEL    = "meta-llama/llama-4-scout-17b-16e-instruct";
@@ -78,7 +78,15 @@ export async function fetchVideoContent(submissionUrl) {
         `${OEMBED_ENDPOINT}?url=${encodeURIComponent(url)}&omit_script=true`,
         { signal: AbortSignal.timeout(8000) },
       );
-      if (!res.ok) throw new Error(`oEmbed HTTP ${res.status}`);
+      if (!res.ok) {
+        const unavailableKind = res.status === 404 ? "deleted"
+          : (res.status === 403 || res.status === 401) ? "restricted"
+          : res.status === 429 ? "rate_limited"
+          : res.status >= 500 ? "server_error"
+          : "unreachable";
+        console.warn("[grader/video] oEmbed", res.status, "for", url, "→", unavailableKind);
+        return { platform: "twitter", tweetText: "", thumbnailUrls: [], fallbackText: "", unavailableKind };
+      }
       const data = await res.json();
       const tweetText = extractTweetText(data.html ?? "");
       const thumbnail = await tryGetThumbnail(url);
@@ -89,8 +97,10 @@ export async function fetchVideoContent(submissionUrl) {
         fallbackText: "",
       };
     } catch (err) {
-      console.warn("[grader/video] oEmbed failed for", url, "—", err.message);
-      return { platform: "twitter", tweetText: "", thumbnailUrls: [], fallbackText: "" };
+      const isTimeout = err.name === "TimeoutError" || /timeout|abort/i.test(err.message);
+      const unavailableKind = isTimeout ? "unreachable" : "server_error";
+      console.warn("[grader/video] oEmbed failed for", url, "—", err.message, "→", unavailableKind);
+      return { platform: "twitter", tweetText: "", thumbnailUrls: [], fallbackText: "", unavailableKind };
     }
   }
 
@@ -203,6 +213,12 @@ export async function llmGradeVideo({ task_type, requirements, videoData, heuris
   const submissionText =
     videoData.tweetText || videoData.fallbackText || "(no submission text available)";
 
+  const proofStatusLine = videoData.unavailableKind
+    ? `PROOF STATUS: ${videoData.unavailableKind}\n` +
+      `The submission content could not be retrieved (${unavailableKindLabel(videoData.unavailableKind)}). ` +
+      `Grade based on available metadata, heuristics, and context only.`
+    : null;
+
   const textPart = [
     `TASK CATEGORY: ${task_type ?? "video"}`,
     "",
@@ -211,7 +227,8 @@ export async function llmGradeVideo({ task_type, requirements, videoData, heuris
     "",
     "HEURISTIC RESULTS:",
     JSON.stringify(heuristics, null, 2),
-    "",
+    proofStatusLine ? "" : null,
+    proofStatusLine,
     `PLATFORM: ${videoData.platform}`,
     "SUBMISSION (tweet / page text):",
     "<<<",
@@ -223,7 +240,7 @@ export async function llmGradeVideo({ task_type, requirements, videoData, heuris
       : "No video thumbnail is available — grade based on the tweet text and heuristics only.",
     "",
     "Return your verdict as a single JSON object.",
-  ].join("\n");
+  ].filter((s) => s != null).join("\n");
 
   // Build multimodal user content: text first, then up to 5 image_url parts.
   const userContent = [{ type: "text", text: textPart }];

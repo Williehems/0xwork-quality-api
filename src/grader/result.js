@@ -8,7 +8,7 @@
 import Groq from "groq-sdk";
 import { config } from "../config.js";
 import * as settings from "../settings.js";
-import { SYSTEM_PROMPT } from "./prompt.js";
+import { SYSTEM_PROMPT, unavailableKindLabel } from "./prompt.js";
 import { VISION_MODEL } from "./video.js";
 
 let _client = null;
@@ -17,7 +17,7 @@ function groqClient() {
   return _client;
 }
 
-function buildResultText({ requirements, submission, evidence, meta, videoData, heuristics }) {
+function buildResultText({ requirements, submission, evidence, meta, videoData, heuristics, unavailableKind }) {
   const evidenceLines = (evidence ?? []).slice(0, 10).map((e, i) => {
     const parts = [`${i + 1}.`];
     if (e.label) parts.push(`[${e.label}]`);
@@ -41,6 +41,14 @@ function buildResultText({ requirements, submission, evidence, meta, videoData, 
   if (meta?.proof_url) lines.push(`PROOF URL: ${meta.proof_url}`);
   if (meta?.proof_type) lines.push(`PROOF TYPE: ${meta.proof_type}`);
   if (meta?.content_hash) lines.push(`CONTENT HASH: ${meta.content_hash}`);
+  if (unavailableKind) {
+    lines.push(
+      "",
+      `PROOF STATUS: ${unavailableKind}`,
+      `The proof content could not be retrieved (${unavailableKindLabel(unavailableKind)}). ` +
+        `Grade based on available metadata, heuristics, and context only.`,
+    );
+  }
   if (Array.isArray(meta?.artifact_refs) && meta.artifact_refs.length) {
     lines.push(`ARTIFACT REFS: ${meta.artifact_refs.join(", ")}`);
   }
@@ -68,7 +76,7 @@ function buildResultText({ requirements, submission, evidence, meta, videoData, 
   return lines.join("\n");
 }
 
-export async function llmGradeResult({ requirements, submission, evidence, meta, videoData, heuristics }) {
+export async function llmGradeResult({ requirements, submission, evidence, meta, videoData, heuristics, unavailableKind }) {
   if (!config.groq.enabled) throw new Error("Groq disabled (no GROQ_API_KEY)");
 
   // Collect image URLs: heuristic-extracted + video thumbnails (for video+result tasks).
@@ -78,7 +86,7 @@ export async function llmGradeResult({ requirements, submission, evidence, meta,
     .filter((u) => typeof u === "string" && /^https?:\/\//i.test(u))
     .slice(0, 5);
 
-  const textPart = buildResultText({ requirements, submission, evidence, meta, videoData, heuristics });
+  const textPart = buildResultText({ requirements, submission, evidence, meta, videoData, heuristics, unavailableKind });
 
   const userContent = [{ type: "text", text: textPart }];
   for (const url of imageUrls) {

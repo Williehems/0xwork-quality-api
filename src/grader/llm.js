@@ -11,7 +11,7 @@ function client() {
   return _client;
 }
 
-export async function llmGrade({ task_type, requirements, submission, heuristics }) {
+export async function llmGrade({ task_type, requirements, submission, heuristics, unavailableKind }) {
   if (!config.groq.enabled) {
     throw new Error("Groq disabled (no GROQ_API_KEY)");
   }
@@ -20,7 +20,7 @@ export async function llmGrade({ task_type, requirements, submission, heuristics
       model: settings.get("groq_model", config.groq.model),
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: buildUserMessage({ task_type, requirements, submission, heuristics }) },
+        { role: "user", content: buildUserMessage({ task_type, requirements, submission, heuristics, unavailableKind }) },
       ],
       response_format: { type: "json_object" },
       temperature: 0.2,

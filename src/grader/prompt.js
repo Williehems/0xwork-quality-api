@@ -5,6 +5,7 @@ You receive:
 - the task requirements (title, optional word count, topic keywords, optional notes, optional char limit for social, optional target_action / success_signals for result)
 - the agent's submission text
 - a JSON object of deterministic heuristic results already computed for you (shape varies by category)
+- optionally: a PROOF STATUS section explaining why the content could not be retrieved
 
 Your job is to return a single JSON object with this exact shape:
 
@@ -39,9 +40,40 @@ SOCIAL — Use character_count vs limit (default 280 for Twitter/X), hashtags, m
 
 VIDEO — Submission is a Twitter/X post (or similar) containing a video. Use has_transcript (tweet text available) and has_visual (thumbnail attached). If no_transcript AND no_visual → reject. Evaluate tweet text for topic relevance; use thumbnail image(s) to assess visual quality, production value, and whether content matches the task. Missing keywords in a short tweet is less damning than in a long written piece — weigh intent.
 
-RESULT — Submission is proof that the worker achieved a quantifiable outcome (a follow, retweet, signup, metric hit). The deliverable is evidence — screenshots, dashboard URLs, content hashes, an "evidence" array — not crafted content. Judge whether the proof demonstrably shows that the requirements.target_action was completed and at least one of requirements.success_signals is present. DO NOT use word_count, char_limit, topic_coverage, hashtags, or readability — they are meaningless here. Short submission text is correct and expected. If proof_presence shows no_proof → reject. If images are attached, inspect them for the success signal (e.g., "Following" button state, dashboard number). If only a hash is present, lean review.`;
+RESULT — Submission is proof that the worker achieved a quantifiable outcome (a follow, retweet, signup, metric hit). The deliverable is evidence — screenshots, dashboard URLs, content hashes, an "evidence" array — not crafted content. Judge whether the proof demonstrably shows that the requirements.target_action was completed and at least one of requirements.success_signals is present. DO NOT use word_count, char_limit, topic_coverage, hashtags, or readability — they are meaningless here. Short submission text is correct and expected. If proof_presence shows no_proof → reject. If images are attached, inspect them for the success signal (e.g., "Following" button state, dashboard number). If only a hash is present, lean review.
 
-export function buildUserMessage({ task_type, requirements, submission, heuristics }) {
+PROOF UNAVAILABILITY — when a PROOF STATUS section is present in the user message, apply these rules instead of normal content grading:
+- deleted: The worker's submission is gone (HTTP 404). Unless there is a worker summary, screenshot evidence, or artifact refs proving the work existed and meets requirements, lean reject. State "the linked content has been deleted" in reasoning.
+- restricted: The content exists but requires login or is private (HTTP 403/401). Lean review — the worker must make it publicly accessible. Do not reject outright unless the task deadline context makes resubmission impossible.
+- rate_limited: Platform rate-limited the fetch (HTTP 429). This is transient. Lean review; note the platform was temporarily unavailable.
+- server_error: Platform returned a server error (HTTP 5xx). Transient. Lean review.
+- unreachable: URL is unreachable (DNS failure, timeout, connection refused). Lean review unless the heuristics also confirm the link is dead.
+- hash_only: Worker submitted a hash with no public URL. Grade on worker summary and evidence metadata only. If nothing else exists, lean review.
+- empty_content: URL resolved but returned empty or off-topic content (possible soft 404 or login redirect). Lean review or reject based on whether the worker summary compensates.
+In all unavailability cases: check if worker_summary, evidence[], or artifact_refs provide enough signal to still approve. Explicitly state the unavailability reason in your reasoning.`;
+
+export function unavailableKindLabel(kind) {
+  return {
+    deleted:      "content has been deleted or removed (HTTP 404)",
+    restricted:   "content is private or requires login (HTTP 403/401)",
+    rate_limited: "platform rate-limited the fetch (HTTP 429) — transient",
+    server_error: "server error when fetching (HTTP 5xx) — transient",
+    unreachable:  "URL is unreachable (DNS failure, timeout, or connection refused)",
+    hash_only:    "proof was submitted as a hash, no public URL available",
+    empty_content:"URL returned empty or off-topic content (possible soft 404 or login redirect)",
+  }[kind] ?? kind;
+}
+
+export function buildUserMessage({ task_type, requirements, submission, heuristics, unavailableKind }) {
+  const proofStatus = unavailableKind
+    ? [
+        `PROOF STATUS: ${unavailableKind}`,
+        `The submission content could not be retrieved (${unavailableKindLabel(unavailableKind)}). ` +
+          `Grade based on available metadata, heuristics, and context only.`,
+        "",
+      ].join("\n")
+    : null;
+
   return [
     `TASK CATEGORY: ${task_type ?? "writing"}`,
     "",
@@ -50,12 +82,12 @@ export function buildUserMessage({ task_type, requirements, submission, heuristi
     "",
     "HEURISTIC RESULTS:",
     JSON.stringify(heuristics, null, 2),
-    "",
+    proofStatus,
     "SUBMISSION:",
     "<<<",
     submission,
     ">>>",
     "",
     "Return your verdict as a single JSON object.",
-  ].join("\n");
+  ].filter((s) => s != null).join("\n");
 }

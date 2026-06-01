@@ -3,6 +3,7 @@ import { llmGrade } from "./llm.js";
 import { detectCategoryFromSubmission, llmGradeVideo } from "./video.js";
 import { llmGradeResult } from "./result.js";
 import { config } from "../config.js";
+import { unavailableKindLabel } from "./prompt.js";
 
 export async function grade({ task_type, tier, requirements, submission, evidence, meta }) {
   const hintCategory = normalizeTaskType(task_type);
@@ -16,6 +17,10 @@ export async function grade({ task_type, tier, requirements, submission, evidenc
   // category is forced to "result".
   const { category: detected, videoData } = await detectCategoryFromSubmission(submission, hintCategory);
   const category = resultsBased ? "result" : detected;
+
+  // Classify why content is unavailable (deleted, restricted, unreachable, etc.)
+  // so the LLM prompt and heuristic verdict can act on it specifically.
+  const unavailableKind = videoData?.unavailableKind ?? meta?.proof_error_kind ?? null;
 
   // When detection fetched content from a URL (tweet text, page text), use that
   // as the effective submission for text-based heuristics instead of the raw URL.
@@ -32,6 +37,9 @@ export async function grade({ task_type, tier, requirements, submission, evidenc
     evidence,
     meta,
   });
+
+  // Inject unavailability so heuristicVerdict/heuristicReason can act on it.
+  if (unavailableKind) heuristics.unavailable_kind = unavailableKind;
 
   if (tier === "fast" || !config.groq.enabled) {
     return {
@@ -58,9 +66,10 @@ export async function grade({ task_type, tier, requirements, submission, evidenc
         meta,
         videoData,
         heuristics,
+        unavailableKind,
       });
     } else {
-      llm = await llmGrade({ task_type: category, requirements, submission: effectiveSubmission, heuristics });
+      llm = await llmGrade({ task_type: category, requirements, submission: effectiveSubmission, heuristics, unavailableKind });
     }
 
     return {
@@ -91,6 +100,11 @@ export async function grade({ task_type, tier, requirements, submission, evidenc
 }
 
 function heuristicVerdict(h) {
+  // Unavailability takes priority over all other signals.
+  if (h.unavailable_kind) {
+    return h.unavailable_kind === "deleted" ? "reject" : "review";
+  }
+
   // Result tasks: judge proof presence, not text length / coverage.
   if (h.category === "result") {
     if ((h.issues ?? []).includes("no_proof")) return "reject";
@@ -143,6 +157,10 @@ function heuristicVerdict(h) {
 }
 
 function heuristicReason(h) {
+  if (h.unavailable_kind) {
+    return `proof unavailable: ${unavailableKindLabel(h.unavailable_kind)}`;
+  }
+
   const bits = [];
   if (h.category === "result") {
     const p = h.proof_presence ?? {};

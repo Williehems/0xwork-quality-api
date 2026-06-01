@@ -106,9 +106,10 @@ export async function getSubmission(taskId, fallbackProofUrl) {
   const linkDead = meta?.linkHealth?.ok === false;
   const isHashOnly = url && /^[0-9a-fA-F]{40,}$/.test(url);
 
-  const makeManual = (reason) => ({
+  const makeManual = (reason, errorKind = "unreachable") => ({
     kind: "needs_manual",
     reason,
+    errorKind,
     summary: meta?.summary ?? null,
     evidence: (meta?.evidence ?? []).map((e) => ({
       label: e.label ?? null,
@@ -125,12 +126,12 @@ export async function getSubmission(taskId, fallbackProofUrl) {
     artifactRefs: meta?.artifactRefs ?? [],
   });
 
-  if (!url) return makeManual("No submission URL was provided");
-  if (linkDead) return makeManual("The proof URL is no longer reachable");
+  if (!url) return makeManual("No submission URL was provided", "unreachable");
+  if (linkDead) return makeManual("The proof URL is no longer reachable", "deleted");
   if (isHashOnly && meta?.proofType === "agent_browser") {
-    return makeManual("The submission was delivered through a private channel (no public URL)");
+    return makeManual("The submission was delivered through a private channel (no public URL)", "hash_only");
   }
-  if (isHashOnly) return makeManual("The proof is a raw hash, not a fetchable URL");
+  if (isHashOnly) return makeManual("The proof is a raw hash, not a fetchable URL", "hash_only");
 
   try {
     const content = await fetchProofContent(url);
@@ -147,7 +148,7 @@ export async function getSubmission(taskId, fallbackProofUrl) {
       proofType: meta?.proofType ?? null,
     };
   } catch (err) {
-    return makeManual(`Couldn't fetch the proof URL (${err.message})`);
+    return makeManual(`Couldn't fetch the proof URL (${err.message})`, err.proofErrorKind ?? "unreachable");
   }
 }
 
@@ -207,7 +208,14 @@ export async function fetchProofContent(proofUrl) {
       }
       break;
     }
-    if (!res.ok) throw new Error(`proof fetch failed: HTTP ${res.status}`);
+    if (!res.ok) {
+      const kind = res.status === 404 ? "deleted"
+        : (res.status === 403 || res.status === 401) ? "restricted"
+        : res.status === 429 ? "rate_limited"
+        : res.status >= 500 ? "server_error"
+        : "unreachable";
+      throw Object.assign(new Error(`proof fetch failed: HTTP ${res.status}`), { proofErrorKind: kind });
+    }
     const contentType = res.headers.get("content-type") ?? "";
     const buf = Buffer.from(await res.arrayBuffer());
     if (buf.byteLength > MAX_FETCH_BYTES) {

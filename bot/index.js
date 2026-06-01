@@ -664,6 +664,7 @@ bot.callbackQuery(/^pick:(\d+)$/, async (ctx) => {
       submission_format: fetchResult.kind === "content" ? fetchResult.format : null,
       submission_pages: fetchResult.kind === "content" ? fetchResult.pages ?? null : null,
       submission_source: fetchResult.kind === "content" ? "url" : "pending",
+      proof_error_kind: fetchResult.kind === "needs_manual" ? (fetchResult.errorKind ?? null) : null,
     },
     userId: ctx.from.id,
     messageId: loading.message_id,
