@@ -114,3 +114,40 @@ export async function markNotified(tgUserId, taskIds) {
     [tgUserId, ...taskIds],
   );
 }
+
+export async function logGrade({ verdict, taskType, tier, confidence, usdcAmount, fallback }) {
+  try {
+    await pool().query(
+      `INSERT INTO grade_log (verdict, task_type, tier, confidence, usdc_amount, fallback)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [verdict, taskType ?? null, tier ?? null, confidence ?? null, usdcAmount ?? 0, Boolean(fallback)],
+    );
+  } catch (err) {
+    console.warn("[db] grade_log insert failed:", err.message);
+  }
+}
+
+export async function getGradeStats() {
+  const [totals, byType] = await Promise.all([
+    pool().query(`
+      SELECT
+        COUNT(*)::int                                             AS total,
+        COUNT(*) FILTER (WHERE verdict = 'approve')::int         AS approved,
+        COUNT(*) FILTER (WHERE verdict = 'review')::int          AS review,
+        COUNT(*) FILTER (WHERE verdict = 'reject')::int          AS rejected,
+        ROUND(COALESCE(SUM(usdc_amount), 0)::numeric, 4)::float  AS usdc_collected,
+        COUNT(*) FILTER (WHERE fallback = TRUE)::int             AS fallback_count,
+        MAX(created_at)                                          AS last_graded_at,
+        MIN(created_at)                                          AS first_graded_at
+      FROM grade_log
+    `),
+    pool().query(`
+      SELECT task_type, COUNT(*)::int AS count
+      FROM grade_log
+      WHERE task_type IS NOT NULL
+      GROUP BY task_type
+      ORDER BY count DESC
+    `),
+  ]);
+  return { ...totals.rows[0], by_type: byType.rows };
+}

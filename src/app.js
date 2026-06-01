@@ -3,6 +3,7 @@ import rateLimit from "express-rate-limit";
 import { config } from "./config.js";
 import { checkRoute } from "./routes/check.js";
 import { healthRoute } from "./routes/health.js";
+import { statsRoute } from "./routes/stats.js";
 import { mountX402 } from "./middleware/x402.js";
 import * as settings from "./settings.js";
 
@@ -20,6 +21,8 @@ export function createApiApp() {
   app.use(express.json({ limit: "1mb" }));
 
   app.use("/healthz", healthRoute);
+  app.get("/stats", statsRoute);
+  app.get("/stats.json", statsRoute);
 
   // Maintenance gate — admin can flip this without a redeploy.
   app.use("/check", (req, res, next) => {

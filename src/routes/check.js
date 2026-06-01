@@ -1,5 +1,8 @@
 import { z } from "zod";
 import { grade } from "../grader/index.js";
+import { logGrade } from "../../db/index.js";
+import { config } from "../config.js";
+import * as settings from "../settings.js";
 
 const EvidenceItemSchema = z.object({
   label: z.string().optional(),
@@ -57,6 +60,20 @@ export async function checkRoute(req, res, next) {
     }
     const input = parsed.data;
     const verdict = await grade(input);
+
+    // Fire-and-forget — never block the response on a DB write.
+    const usdcAmount = req.x402?.bypassed
+      ? 0
+      : parseFloat(settings.get("price", config.pricing.full) ?? 0);
+    logGrade({
+      verdict:    verdict.verdict,
+      taskType:   input.task_type,
+      tier:       input.tier,
+      confidence: verdict.confidence ?? null,
+      usdcAmount,
+      fallback:   Boolean(verdict.fallback),
+    }).catch(() => {});
+
     res.json({
       ...verdict,
       checked_at: new Date().toISOString(),

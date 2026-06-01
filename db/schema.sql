@@ -33,3 +33,17 @@ CREATE TABLE IF NOT EXISTS submission_notified (
   notified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (tg_user_id, task_id)
 );
+
+CREATE TABLE IF NOT EXISTS grade_log (
+  id          SERIAL PRIMARY KEY,
+  verdict     TEXT NOT NULL,
+  task_type   TEXT,
+  tier        TEXT,
+  confidence  REAL,
+  usdc_amount REAL NOT NULL DEFAULT 0,
+  fallback    BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS grade_log_created_idx ON grade_log (created_at DESC);
+CREATE INDEX IF NOT EXISTS grade_log_verdict_idx  ON grade_log (verdict);
