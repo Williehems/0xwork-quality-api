@@ -1234,6 +1234,9 @@ http.get("/comment-draft/:sessionId", async (req, res) => {
       requirements: payload.requirements,
       recentComments: payload.meta?.comments ?? [],
       workerAddress: payload.meta?.worker_address ?? null,
+      unavailableKind: payload.verdict?.evidence?.unavailable_kind
+        ?? payload.meta?.proof_error_kind
+        ?? null,
     });
     res.json({ draft });
   } catch (err) {

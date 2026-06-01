@@ -8,6 +8,7 @@
 import Groq from "groq-sdk";
 import { config } from "../config.js";
 import * as settings from "../settings.js";
+import { unavailableKindLabel } from "./prompt.js";
 
 const SYSTEM_PROMPT = `You are the poster of a 0xWork task. Gavel (an AI grader) just returned a verdict on a worker's submission. Write a brief, friendly comment (1–3 sentences, under 280 chars) addressed to the worker, matching the verdict tone:
 
@@ -22,6 +23,7 @@ Rules:
 - If RECENT THREAD is provided and contains messages labeled (worker), acknowledge the worker's most recent (worker)-labeled message directly. Never restart the conversation as if prior messages don't exist.
 - For review/reject only: name exactly ONE specific action the worker must take. If the worker already promised that action in the thread, skip asking and instead confirm you're watching for it.
 - If acknowledging the thread and naming an action conflict with the 280-char limit, drop the acknowledgment — the action comes first.
+- If PROOF UNAVAILABILITY is provided, this takes priority over all other rules. Name the specific failure in plain language (e.g. "the linked post has been deleted", "the page is private") and tell the worker exactly what to do next (resubmit with a public link, make the account public, etc.).
 
 Return a single JSON object: { "comment": "..." }`;
 
@@ -31,7 +33,20 @@ function client() {
   return _client;
 }
 
-function fallbackDraft({ verdict, reasoning, concerns, strengths, title }) {
+const UNAVAILABILITY_ACTION = {
+  deleted:       "The linked content has been deleted. Please resubmit with a public URL or screenshot of the work.",
+  restricted:    "The linked content is private or requires login. Please make it publicly accessible and share the link.",
+  rate_limited:  "We couldn't access the submission right now (platform rate limit). Please try resubmitting shortly.",
+  server_error:  "The submission URL returned a server error. Please check the link and resubmit.",
+  unreachable:   "The submission URL is unreachable. Please check the link and resubmit with a working URL.",
+  hash_only:     "The submission was received as a hash with no public URL. Please provide a publicly accessible link.",
+  empty_content: "The submission URL returned empty or unrelated content. Please resubmit with the correct link.",
+};
+
+function fallbackDraft({ verdict, reasoning, concerns, strengths, title, unavailableKind }) {
+  if (unavailableKind && UNAVAILABILITY_ACTION[unavailableKind]) {
+    return UNAVAILABILITY_ACTION[unavailableKind];
+  }
   const concern = concerns?.[0];
   const strength = strengths?.[0];
   const taskRef = title ? ` on "${title}"` : "";
@@ -45,7 +60,7 @@ function fallbackDraft({ verdict, reasoning, concerns, strengths, title }) {
   return `Thanks for the submission${taskRef}. ${concern ?? reasoning ?? "A few things need adjusting before I can approve."} Could you revise and resubmit?`;
 }
 
-export async function draftComment({ verdict, reasoning, concerns, strengths, requirements, recentComments, workerAddress }) {
+export async function draftComment({ verdict, reasoning, concerns, strengths, requirements, recentComments, workerAddress, unavailableKind }) {
   const title = requirements?.title;
   const fallback = fallbackDraft({
     verdict,
@@ -53,6 +68,7 @@ export async function draftComment({ verdict, reasoning, concerns, strengths, re
     concerns,
     strengths,
     title,
+    unavailableKind,
   });
 
   if (!config.groq.enabled) return fallback;
@@ -82,6 +98,7 @@ export async function draftComment({ verdict, reasoning, concerns, strengths, re
     Array.isArray(strengths) && strengths.length ? `STRENGTHS:\n- ${strengths.slice(0, 2).join("\n- ")}` : "",
     Array.isArray(concerns) && concerns.length ? `CONCERNS:\n- ${concerns.slice(0, 2).join("\n- ")}` : "",
     recent ? `RECENT THREAD:\n${recent}` : "",
+    unavailableKind ? `PROOF UNAVAILABILITY: ${unavailableKind}\n${unavailableKindLabel(unavailableKind)}` : "",
     "",
     "Draft the comment now. Output JSON only.",
   ].filter(Boolean).join("\n\n");
