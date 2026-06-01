@@ -190,7 +190,7 @@ function renderHome(model, bypass) {
 
   <div class="meta">
     Base mainnet &nbsp;·&nbsp; ${model} &nbsp;·&nbsp; ${bypass ? "payments paused" : "x402 micropayments"}<br>
-    <a href="/stats">stats</a> &nbsp;·&nbsp; <a href="/healthz">healthz</a> &nbsp;·&nbsp; <a href="https://zeroxwork-quality-api.onrender.com">zeroxwork-quality-api.onrender.com</a>
+    <a href="/stats">stats</a> &nbsp;·&nbsp; <a href="/healthz">healthz</a> &nbsp;·&nbsp; <a href="https://t.me/Oxwork_quality_bot" target="_blank">t.me/Oxwork_quality_bot</a>
   </div>
 
 </div>

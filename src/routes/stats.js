@@ -55,7 +55,9 @@ function renderHtml(stats, price, payTo, bypass) {
     letter-spacing: 0.15em;
     text-transform: uppercase;
     margin-bottom: 0.5rem;
+    text-decoration: none;
   }
+  .header-eyebrow:hover { opacity: 0.75; }
   .header-title {
     font-size: 1.75rem;
     font-weight: 700;
@@ -236,7 +238,7 @@ function renderHtml(stats, price, payTo, bypass) {
 <div class="wrap">
 
   <div class="header">
-    <div class="header-eyebrow">${LOGO_SVG} Gavel</div>
+    <a href="/" class="header-eyebrow">${LOGO_SVG} Gavel</a>
     <div class="header-title">Grading Stats</div>
     <div class="header-sub">Live data · <a href="/stats.json">JSON</a></div>
   </div>
@@ -314,7 +316,10 @@ function renderHtml(stats, price, payTo, bypass) {
   </div>
 
   <div class="footer">
-    Gavel · <a href="https://zeroxwork-quality-api.onrender.com">zeroxwork-quality-api.onrender.com</a>
+    <a href="/">home</a> &nbsp;·&nbsp;
+    <a href="/stats.json">json</a> &nbsp;·&nbsp;
+    <a href="/healthz">healthz</a> &nbsp;·&nbsp;
+    <a href="https://t.me/Oxwork_quality_bot" target="_blank">telegram</a>
   </div>
 
 </div>
@@ -324,7 +329,7 @@ function renderHtml(stats, price, payTo, bypass) {
 
 export async function statsRoute(req, res, next) {
   try {
-    const json = req.path === ".json" || req.headers.accept?.includes("application/json");
+    const json = req.path.endsWith(".json") || req.headers.accept?.includes("application/json");
     const bypass = config.x402.bypass;
     const price  = settings.get("price", config.pricing.full);
     const payTo  = config.x402.payTo;
