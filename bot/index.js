@@ -1159,15 +1159,8 @@ bot.catch((err) => console.error("[bot] error:", err));
 const http = express();
 http.use((req, res, next) => {
   try {
-    const miniAppOrigin = MINIAPP_URL ? new URL(MINIAPP_URL).origin : null;
-    const devOrigins = process.env.NODE_ENV !== 'production'
-      ? ['http://localhost:4000', 'http://localhost:3000', 'null']
-      : [];
-    const widgetOrigin = process.env.WIDGET_ALLOWED_ORIGIN ?? null;
-    const reqOrigin = req.headers.origin ?? '';
-    const allowed = [miniAppOrigin, widgetOrigin, ...devOrigins].filter(Boolean);
-    const match = allowed.includes(reqOrigin) ? reqOrigin : (allowed[0] ?? null);
-    if (match) res.header("Access-Control-Allow-Origin", match);
+    const allowedOrigin = MINIAPP_URL ? new URL(MINIAPP_URL).origin : null;
+    if (allowedOrigin) res.header("Access-Control-Allow-Origin", allowedOrigin);
   } catch {
     // MINIAPP_URL is malformed — skip CORS header
   }
