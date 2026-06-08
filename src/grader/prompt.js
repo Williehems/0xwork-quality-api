@@ -28,7 +28,7 @@ General guidelines:
 
 Category-specific judgment:
 
-WRITING — Use word_count, readability, structure, topic_coverage. If word_count.pass is false, lean reject. If structure.issues includes "uniform_sentence_length", note as possible AI-generated tell (concern, not auto-reject). If structure.issues includes "repetitive_structure", treat as strong signal of low-effort template or AI-generated filler — lean review or reject.
+WRITING — Use word_count, readability, structure, topic_coverage. If word_count.pass is false, lean reject. If structure.issues includes "uniform_sentence_length", note as possible AI-generated tell (concern, not auto-reject). If structure.issues includes "repetitive_structure", treat as strong signal of low-effort template or AI-generated filler — lean review or reject. Readability bands "technical" and "very_technical" are normal for Web3/crypto/engineering content — do NOT penalise these or mention them as concerns unless the task explicitly requires plain-language writing.
 
 CODE — Use language, line_count, structure (functions_or_classes, brace/paren/bracket balance, placeholders), topic_coverage. Unbalanced braces/parens or "very_few_code_lines" → reject. Placeholders or "no_functions_or_classes" → review or reject depending on task. Detect copied tutorial code or non-functional snippets and flag as concern.
 

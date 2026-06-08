@@ -162,7 +162,7 @@ async function tickSubmissionsForUser(tgUserId, wallet) {
   }
 
   for (const t of newTasks.slice(0, 5)) {
-    const kb = new InlineKeyboard().text("⚖️ Grade", `grade:${t.id}`);
+    const kb = new InlineKeyboard().text("⚖️ Grade", `pick:${t.id}`);
     const lines = [
       `📥 <b>New submission on task #${esc(String(t.id))}</b>`,
       esc(t.title || "Untitled"),
@@ -1159,13 +1159,20 @@ bot.catch((err) => console.error("[bot] error:", err));
 const http = express();
 http.use((req, res, next) => {
   try {
-    const allowedOrigin = MINIAPP_URL ? new URL(MINIAPP_URL).origin : null;
-    if (allowedOrigin) res.header("Access-Control-Allow-Origin", allowedOrigin);
+    const miniAppOrigin = MINIAPP_URL ? new URL(MINIAPP_URL).origin : null;
+    const devOrigins = process.env.NODE_ENV !== 'production'
+      ? ['http://localhost:4000', 'http://localhost:3000', 'null']
+      : [];
+    const widgetOrigin = process.env.WIDGET_ALLOWED_ORIGIN ?? null;
+    const reqOrigin = req.headers.origin ?? '';
+    const allowed = [miniAppOrigin, widgetOrigin, ...devOrigins].filter(Boolean);
+    const match = allowed.includes(reqOrigin) ? reqOrigin : (allowed[0] ?? null);
+    if (match) res.header("Access-Control-Allow-Origin", match);
   } catch {
     // MINIAPP_URL is malformed — skip CORS header
   }
   res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Content-Type, X-Session-Secret");
+  res.header("Access-Control-Allow-Headers", "Content-Type, X-Session-Secret, X-PAYMENT");
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });

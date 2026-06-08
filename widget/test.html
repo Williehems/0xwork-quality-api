@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gavel Widget — Integration Test</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #120825;
+    color: #111;
+    min-height: 100vh;
+    padding: 2rem 1rem 5rem;
+  }
+  .ticker {
+    position: fixed; top: 0; left: 0; right: 0;
+    background: #000; color: #00ff4c;
+    font-family: "SF Mono","Fira Code",monospace;
+    font-size: 0.68rem; letter-spacing: 0.04em;
+    padding: 5px 0; overflow: hidden; white-space: nowrap;
+    border-bottom: 1px solid #1a1a1a; z-index: 99;
+  }
+  .ticker-inner { display: inline-block; animation: scroll-ticker 35s linear infinite; }
+  @keyframes scroll-ticker { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+
+  .nav {
+    position: fixed; top: 28px; left: 0; right: 0;
+    background: #0b0516; border-bottom: 1px solid rgba(255,255,255,0.05);
+    height: 58px; display: flex; align-items: center; padding: 0 1.75rem; z-index: 98;
+  }
+  .nav-logo { display: flex; align-items: center; gap: 0.55rem; text-decoration: none; }
+  .nav-logo-diamond { width: 30px; height: 30px; background: #ff8c00; clip-path: polygon(50% 0%,100% 50%,50% 100%,0% 50%); }
+  .nav-logo-name { font-size: 0.92rem; font-weight: 800; color: #fff; letter-spacing: -0.3px; }
+  .nav-logo-name span { color: #00ff4c; }
+  .wallet-pill {
+    margin-left: auto;
+    background: #111; border: 1px solid #2a2a2a; color: #fff;
+    font-weight: 600; font-size: 0.75rem; border-radius: 20px;
+    padding: 5px 11px 5px 9px; display: flex; align-items: center; gap: 0.5rem;
+    font-family: "SF Mono","Fira Code",monospace;
+  }
+  .wallet-dot { width: 7px; height: 7px; background: #00ff4c; border-radius: 50%; box-shadow: 0 0 6px #00ff4c; }
+  .wallet-icon { width: 16px; height: 16px; border-radius: 50%; background: linear-gradient(135deg,#ff8c00,#ffd166); }
+
+  .wrap { max-width: 740px; margin: 120px auto 0; padding: 1.75rem 1.25rem; }
+  .back { color: #666; font-size: 0.8rem; text-decoration: none; display: inline-block; margin-bottom: 1.25rem; }
+  .back:hover { color: #aaa; }
+
+  .task-card { background: #fff; border-radius: 4px; overflow: hidden; box-shadow: 0 2px 40px rgba(0,0,0,0.5); }
+  .task-type-bar { background: #00ff4c; padding: 9px 18px; display: flex; align-items: center; gap: 0.6rem; }
+  .task-type-name { font-size: 0.78rem; font-weight: 800; color: #000; letter-spacing: 0.07em; text-transform: uppercase; }
+  .task-paid-badge { background: #000; color: #fff; font-size: 0.62rem; font-weight: 700; padding: 2px 9px; border-radius: 20px; letter-spacing: 0.06em; }
+  .task-title { padding: 1.4rem 1.5rem 0; font-size: 1.35rem; font-weight: 800; color: #000; text-transform: uppercase; letter-spacing: -0.015em; }
+  .task-desc { padding: 1rem 1.5rem 1.25rem; font-size: 0.875rem; color: #333; line-height: 1.65; }
+
+  .delivered-work { margin: 0 1.5rem 1.25rem; border: 1px solid #ddd; border-radius: 5px; overflow: hidden; }
+  .section-cap { font-size: 0.63rem; font-weight: 700; color: #888; letter-spacing: 0.1em; text-transform: uppercase; padding: 7px 12px; background: #f8f8f8; border-bottom: 1px solid #eee; }
+  .proof-inner { padding: 14px; }
+  .proof-pkg-label { font-size: 0.62rem; font-weight: 700; color: #999; letter-spacing: 0.09em; text-transform: uppercase; margin-bottom: 3px; }
+  .proof-pkg-name { font-size: 0.88rem; font-weight: 700; color: #111; margin-bottom: 10px; }
+  .btn-open-proof { background: #00d4e0; color: #000; font-size: 0.8rem; font-weight: 700; padding: 7px 15px; border-radius: 4px; border: none; cursor: pointer; }
+
+  /* Gavel widget slot */
+  #gavel-root { margin: 0 1.5rem 1.25rem; }
+
+  .task-meta-bar { display: flex; gap: 2rem; padding: 13px 1.5rem; background: #f8f8f8; border-top: 1px solid #eee; flex-wrap: wrap; }
+  .meta-cell { display: flex; flex-direction: column; gap: 2px; }
+  .meta-cap { font-size: 0.6rem; font-weight: 700; color: #aaa; letter-spacing: 0.1em; text-transform: uppercase; }
+  .meta-val { font-size: 0.9rem; font-weight: 700; color: #111; }
+
+  .demo-note {
+    background: rgba(0,255,76,0.06); border: 1px solid rgba(0,255,76,0.2);
+    border-radius: 4px; padding: 10px 14px; margin-bottom: 1.25rem;
+    font-size: 0.72rem; font-family: "SF Mono","Fira Code",monospace; color: #00ff4c;
+    line-height: 1.6;
+  }
+</style>
+</head>
+<body>
+
+<div class="ticker">
+  <span class="ticker-inner">
+    $7.23 PAID OUT /// GAVEL AI GRADING /// ERC-8004 IDENTITY /// X402 MICROPAYMENTS /// XMTP MESSAGING /// REAL WORK /// REAL MONEY /// BUILT ON BASE /// &nbsp;&nbsp;&nbsp;&nbsp;
+    $7.23 PAID OUT /// GAVEL AI GRADING /// ERC-8004 IDENTITY /// X402 MICROPAYMENTS /// XMTP MESSAGING /// REAL WORK /// REAL MONEY /// BUILT ON BASE /// &nbsp;&nbsp;&nbsp;&nbsp;
+  </span>
+</div>
+
+<nav class="nav">
+  <a class="nav-logo" href="#">
+    <div class="nav-logo-diamond"></div>
+    <div style="display:flex;flex-direction:column;margin-left:0.3rem">
+      <span class="nav-logo-name"><span>0x</span>WORK</span>
+      <span style="font-size:0.6rem;color:#555;font-family:monospace">v1.0.4 [Alpha] ▾</span>
+    </div>
+  </a>
+  <div class="wallet-pill">
+    <span class="wallet-dot"></span>
+    <span class="wallet-icon"></span>
+    <span>0xe330…FBed</span>
+  </div>
+</nav>
+
+<div class="wrap">
+  <a class="back" href="#">← Back to In Review</a>
+
+  <div class="demo-note">
+    ▶ GAVEL WIDGET TEST · API bypass mode (X402_BYPASS=true) · no real wallet needed
+  </div>
+
+  <div class="task-card">
+    <div class="task-type-bar">
+      <span class="task-type-name">Research</span>
+      <span class="task-paid-badge">✓ PAID</span>
+    </div>
+
+    <div class="task-title">Hosted-Only Claim UX Audit</div>
+    <div class="task-desc">Walk through the hosted-only task claim experience and write a short UX note covering the claim result, next-step clarity, and how obvious the submission requirements are.</div>
+
+    <div class="delivered-work">
+      <div class="section-cap">Delivered Work</div>
+      <div class="proof-inner">
+        <div class="proof-pkg-label">Proof Package</div>
+        <div class="proof-pkg-name">Task 532 proof</div>
+        <button class="btn-open-proof">Open proof</button>
+      </div>
+    </div>
+
+    <!-- Gavel widget mounts here -->
+    <div id="gavel-root"></div>
+
+    <div class="task-meta-bar">
+      <div class="meta-cell"><span class="meta-cap">Bounty</span><span class="meta-val">5.00 USDC</span></div>
+      <div class="meta-cell"><span class="meta-cap">Poster</span><span class="meta-val">0xe330…FBed</span></div>
+      <div class="meta-cell"><span class="meta-cap">Worker</span><span class="meta-val">0x7928…0080</span></div>
+      <div class="meta-cell"><span class="meta-cap">Submitted</span><span class="meta-val">2h ago</span></div>
+    </div>
+  </div>
+</div>
+
+<script src="../widget/gavel-widget.js"></script>
+<script>
+  GavelWidget.init({
+    container: '#gavel-root',
+    apiUrl: 'http://localhost:3000',   // swap for prod URL
+    price: '0.05',
+    wallet: {
+      address: '0xe330f7e5B24Dc42b29e4ae3B66A8BFBed',
+      provider: null,                  // null = bypass mode, no wallet needed
+    },
+    task: {
+      type: 'research',
+      title: 'Hosted-Only Claim UX Audit',
+      description: 'Walk through the hosted-only task claim experience.',
+      requirements: {
+        topic_keywords: ['claim', 'UX', 'submission', 'hosted'],
+        notes: 'Cover: claim result, next-step clarity, submission requirements clarity.',
+      },
+      submission: `The hosted claim flow has three notable UX gaps:
+
+1. Silent failure on expired tasks — the UI shows a spinner then nothing; there is no error message.
+2. After a successful claim the next-step CTA says "Go to dashboard" but the dashboard doesn't highlight the claimed task, leaving workers confused about what to do next.
+3. The submission requirements panel is hidden behind a toggle — most workers miss it on first visit.
+
+Proposed fix for gap 2: add a "View your claimed task →" deep-link immediately after the success confirmation. For gap 3: expand the requirements panel by default on first visit per task.`,
+      proofUrl: 'https://github.com/example/proof-532',
+    },
+    onVerdict(result) {
+      console.log('Gavel verdict:', result);
+    },
+    onApprove(result) {
+      alert('Approve TX would open here using the connected wallet — no second connect prompt.');
+    },
+    onDispute(result) {
+      alert('Dispute TX would open here using the connected wallet.');
+    },
+  });
+</script>
+</body>
+</html>

@@ -17,6 +17,14 @@ export function createApiApp() {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("X-Frame-Options", "DENY");
     res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    // Allow widget embeds from any origin in dev; restrict to 0xwork domain in prod
+    const allowedOrigin = config.nodeEnv === "production"
+      ? (process.env.WIDGET_ALLOWED_ORIGIN ?? "https://0xwork.org")
+      : "*";
+    res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+    res.setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-PAYMENT");
+    if (req.method === "OPTIONS") return res.sendStatus(204);
     next();
   });
   app.use(express.json({ limit: "1mb" }));

@@ -22,10 +22,10 @@ export function writingHeuristics({ submission, requirements }) {
 
 function bandForEase(ease) {
   if (ease == null) return "unknown";
-  if (ease >= 70) return "easy";
-  if (ease >= 50) return "standard";
-  if (ease >= 30) return "difficult";
-  return "very_difficult";
+  if (ease >= 60) return "easy";
+  if (ease >= 30) return "standard";
+  if (ease >= 0)  return "technical";
+  return "very_technical";
 }
 
 function sentenceStructure(sents) {
