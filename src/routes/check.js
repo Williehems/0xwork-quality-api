@@ -18,6 +18,7 @@ const MetaSchema = z.object({
   summary: z.string().optional(),
   results_based: z.boolean().optional(),
   proof_type: z.string().optional(),
+  raw_submission: z.string().optional(),
 });
 
 const CheckRequestSchema = z.object({

@@ -805,6 +805,9 @@ bot.callbackQuery(/^confirm:(.+)$/, async (ctx) => {
               summary: payload.meta.worker_summary ?? undefined,
               results_based: payload.meta.results_based ?? undefined,
               proof_type: payload.meta.proof_type ?? undefined,
+              raw_submission: payload.meta.submission_source === 'summary'
+                ? (payload.meta.delivery_description ?? payload.meta.worker_summary ?? undefined)
+                : undefined,
             }
           : undefined,
       }),

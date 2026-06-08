@@ -29,9 +29,14 @@ export async function grade({ task_type, tier, requirements, submission, evidenc
   const effectiveSubmission =
     (videoData?.tweetText || videoData?.fallbackText) || submission || "";
 
+  // When the submission is a metadata-wrapped summary (bot couldn't fetch the proof),
+  // meta.raw_submission holds the worker's actual text for accurate word count / topic
+  // coverage. The LLM still sees the full composed submission for context.
+  const heuristicSubmission = meta?.raw_submission || effectiveSubmission;
+
   const heuristics = runHeuristics({
     task_type: category,
-    submission: effectiveSubmission,
+    submission: heuristicSubmission,
     requirements,
     videoData,
     evidence,
