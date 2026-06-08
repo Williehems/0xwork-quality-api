@@ -1605,11 +1605,15 @@ function renderRubricConfirm(task, rubric, wordCount, format, pages) {
 
 function renderRubricConfirmFromSession(session) {
   const m = session.meta ?? {};
-  const subWords = String(session.submission ?? "").split(/\s+/).filter(Boolean).length;
+  const isSummary = m.submission_source === "summary";
+  const rawText = isSummary
+    ? (m.delivery_description ?? m.worker_summary ?? "")
+    : String(session.submission ?? "");
+  const subWords = rawText.trim().split(/\s+/).filter(Boolean).length;
   const isResult = session.task_type === "result" || m.results_based === true;
   const sourceTag =
     m.submission_source === "pasted" ? " <i>(pasted)</i>" :
-    m.submission_source === "summary" ? " <i>(summary only)</i>" :
+    isSummary ? " <i>(summary only)</i>" :
     "";
   const lines = [
     `${categoryIcon(m.category)} <b>Task #${m.task_id ?? "?"}</b> · ${esc(session.requirements?.title || "Untitled")}`,
