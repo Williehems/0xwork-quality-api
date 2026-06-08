@@ -406,6 +406,16 @@ async function payAndGrade() {
     tier: payload.tier,
     requirements: payload.requirements,
     submission: payload.submission,
+    ...(payload.meta ? { meta: {
+      proof_url: payload.meta.proof_url ?? undefined,
+      content_hash: payload.meta.content_hash ?? undefined,
+      summary: payload.meta.worker_summary ?? undefined,
+      results_based: payload.meta.results_based ?? undefined,
+      proof_type: payload.meta.proof_type ?? undefined,
+      raw_submission: payload.meta.submission_source === 'summary'
+        ? (payload.meta.delivery_description ?? payload.meta.worker_summary ?? undefined)
+        : undefined,
+    }} : {}),
   });
   const headers = { "content-type": "application/json" };
 
