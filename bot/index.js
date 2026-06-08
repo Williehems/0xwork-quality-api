@@ -1467,34 +1467,35 @@ if (!config.admin.telegramId) {
 
 await registerCommands().catch((e) => console.warn("[bot] setMyCommands failed:", e.message));
 
-// Telegram only allows one getUpdates poller per bot at a time. On Render
-// free-tier redeploys the old instance can still be polling for up to ~30s
-// after the new one starts, which makes getUpdates return 409. Retry with
-// backoff instead of crashing the process.
-async function startWithRetry() {
-  for (let attempt = 1; attempt <= 8; attempt++) {
-    try {
-      await bot.start({
-        drop_pending_updates: true,
-        onStart: (me) => {
-          botUsername = me.username;
-          console.log(`[bot] started as @${me.username}`);
-        },
-      });
-      return;
-    } catch (err) {
-      if (err?.error_code === 409 && attempt < 8) {
-        const wait = Math.min(5000 * attempt, 30000);
-        console.warn(`[bot] 409 conflict (old instance still polling); retry ${attempt}/8 in ${wait}ms`);
-        await new Promise((r) => setTimeout(r, wait));
-        continue;
-      }
-      throw err;
-    }
+// Use webhooks when BOT_PUBLIC_URL is set (production on Render) to avoid
+// the 409 conflict that long-polling causes during rolling deploys.
+// Fall back to long-polling for local dev where BOT_PUBLIC_URL is not set.
+async function startBot() {
+  const me = await bot.api.getMe();
+  botUsername = me.username;
+
+  if (BOT_PUBLIC_URL && BOT_PUBLIC_URL.startsWith("https://")) {
+    const webhookPath = "/tg-webhook";
+    const webhookUrl = `${BOT_PUBLIC_URL}${webhookPath}`;
+
+    // Register the webhook with Telegram.
+    await bot.api.setWebhook(webhookUrl, { drop_pending_updates: true });
+    console.log(`[bot] webhook set → ${webhookUrl}`);
+
+    // Mount the webhook handler on the existing HTTP server.
+    const { webhookCallback } = await import("grammy");
+    http.post(webhookPath, webhookCallback(bot, "express"));
+    console.log(`[bot] started as @${me.username} (webhook mode)`);
+  } else {
+    // Long-polling fallback for local dev.
+    await bot.start({
+      drop_pending_updates: true,
+      onStart: () => console.log(`[bot] started as @${me.username} (polling mode)`),
+    });
   }
 }
 
-startWithRetry().catch((err) => {
+startBot().catch((err) => {
   console.error("[bot] fatal start error:", err);
   process.exit(1);
 });
